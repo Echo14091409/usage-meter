@@ -52,6 +52,104 @@ enum Limits {
         return nil
     }
 
+    /// Saves new numbers unless the stored ones are fresher. A window missing from the new report is kept
+    /// from the old snapshot until it resets. Returns what is stored afterwards.
+    @discardableResult
+    static func store(five: Window?, seven: Window?, asOf: Date) -> LimitSnapshot {
+        let now = Date()
+        let prev = load()
+        func keep(_ w: Window?) -> Window? { w.flatMap { $0.resetDate > now ? $0 : nil } }
+        guard prev == nil || asOf >= prev!.asOf.addingTimeInterval(-1) else { return prev! }
+        let snap = LimitSnapshot(five_hour: five ?? keep(prev?.five_hour), seven_day: seven ?? keep(prev?.seven_day),
+                                 updated_at: now.timeIntervalSince1970, as_of: asOf.timeIntervalSince1970)
+        if snap.five_hour != nil || snap.seven_day != nil {
+            try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
+            if let d = try? JSONEncoder().encode(snap) { try? d.write(to: Paths.snapshot, options: .atomic) }
+        }
+        return snap
+    }
+
+    // MARK: live check through Claude Code itself
+
+    /// Where the `claude` command lives. GUI apps do not get the shell's PATH, so try the usual places,
+    /// then ask a login shell.
+    static func claudePath() -> String? {
+        let home = Paths.home.path
+        let fm = FileManager.default
+        for p in ["\(home)/.local/bin/claude", "\(home)/.claude/local/claude", "/opt/homebrew/bin/claude",
+                  "/usr/local/bin/claude", "\(home)/.npm-global/bin/claude"] where fm.isExecutableFile(atPath: p) {
+            return p
+        }
+        let r = runProcess("/bin/zsh", ["-lc", "command -v claude"], timeout: 10)
+        let p = r.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fm.isExecutableFile(atPath: p) ? p : nil
+    }
+
+    /// Sends one tiny message to the smallest model through Claude Code (your own subscription, no tools,
+    /// no MCP, no settings, nothing saved) and reads the `rate_limit_event` Claude Code prints in
+    /// stream-json mode. Costs about 1,000 tokens of your 5-hour allowance.
+    static func fetchLive() throws -> LimitSnapshot {
+        guard let claude = claudePath() else { throw Problem("Claude Code (the claude command) was not found.") }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("usage-meter-check")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let prompt = "Reply with the single word ok."
+        let r = runProcess(claude, ["-p", prompt, "--model", "haiku", "--output-format", "stream-json", "--verbose",
+                                    "--tools", "", "--strict-mcp-config", "--setting-sources", "",
+                                    "--no-session-persistence", "--system-prompt", prompt],
+                           cwd: dir, timeout: 90)
+        var five: Window?, seven: Window?
+        for line in r.out.split(separator: "\n") where line.contains("rate_limit_event") {
+            guard let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let info = o["rate_limit_info"] as? [String: Any],
+                  let wins = info["unifiedWindows"] as? [String: Any] else { continue }
+            func w(_ k: String) -> Window? {
+                guard let x = wins[k] as? [String: Any],
+                      let u = (x["utilization"] as? NSNumber)?.doubleValue,
+                      let t = (x["resetsAt"] as? NSNumber)?.doubleValue else { return nil }
+                return Window(used_percentage: u * 100, resets_at: t)
+            }
+            five = w("five_hour") ?? five
+            seven = w("seven_day") ?? seven
+        }
+        guard five != nil || seven != nil else {
+            if r.timedOut { throw Problem("Claude Code did not answer within 90 seconds.") }
+            if r.out.contains("\"is_error\":true") || r.code != 0 {
+                let hint = r.err.split(separator: "\n").last.map(String.init) ?? "exit code \(r.code)"
+                throw Problem("Claude Code failed: \(hint)")
+            }
+            throw Problem("Claude Code answered but reported no plan limits (API-key login, or a changed format).")
+        }
+        return store(five: five, seven: seven, asOf: Date())
+    }
+
+    struct ProcResult { var out = "", err = "", code: Int32 = -1, timedOut = false }
+
+    static func runProcess(_ path: String, _ args: [String], cwd: URL? = nil, timeout: TimeInterval) -> ProcResult {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        if let cwd = cwd { p.currentDirectoryURL = cwd }
+        p.standardInput = FileHandle.nullDevice
+        let o = Pipe(), e = Pipe()
+        p.standardOutput = o
+        p.standardError = e
+        var res = ProcResult()
+        do { try p.run() } catch { res.err = error.localizedDescription; return res }
+        let deadline = DispatchTime.now() + timeout
+        let timer = DispatchSource.makeTimerSource()
+        timer.schedule(deadline: deadline)
+        timer.setEventHandler { if p.isRunning { res.timedOut = true; p.terminate() } }
+        timer.resume()
+        let od = o.fileHandleForReading.readDataToEndOfFile()
+        let ed = e.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        timer.cancel()
+        res.out = String(data: od, encoding: .utf8) ?? ""
+        res.err = String(data: ed, encoding: .utf8) ?? ""
+        res.code = p.terminationStatus
+        return res
+    }
+
     /// `UsageMeter --statusline`: Claude Code pipes its status JSON in. Save the limits, print one short line.
     static func statusLineMain() {
         let input = FileHandle.standardInput.readDataToEndOfFile()
@@ -67,20 +165,8 @@ enum Limits {
             }
             // Status lines also re-render in idle sessions, which still carry the limits from their last reply.
             // Date the numbers by that reply, and never let an older session overwrite fresher numbers.
-            let now = Date()
-            let prev = load()
             let asOf = (obj["transcript_path"] as? String).flatMap(lastReply(in:)) ?? Date(timeIntervalSince1970: 0)
-            func keep(_ w: Window?) -> Window? { w.flatMap { $0.resetDate > now ? $0 : nil } }
-            let newer = prev == nil || asOf >= prev!.asOf.addingTimeInterval(-1)
-            let snap = newer
-                ? LimitSnapshot(five_hour: window("five_hour") ?? keep(prev?.five_hour),
-                                seven_day: window("seven_day") ?? keep(prev?.seven_day),
-                                updated_at: now.timeIntervalSince1970, as_of: asOf.timeIntervalSince1970)
-                : prev!
-            if newer && (snap.five_hour != nil || snap.seven_day != nil) {
-                try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
-                if let d = try? JSONEncoder().encode(snap) { try? d.write(to: Paths.snapshot, options: .atomic) }
-            }
+            let snap = store(five: window("five_hour"), seven: window("seven_day"), asOf: asOf)
             if let w = snap.five_hour { parts.append("5h \(Int(w.used_percentage.rounded()))%") }
             if let w = snap.seven_day { parts.append("7d \(Int(w.used_percentage.rounded()))%") }
         }

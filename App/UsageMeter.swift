@@ -11,6 +11,7 @@ final class Model: ObservableObject {
     @Published var hook: Limits.Hook = .none
     @Published var message = ""
     @Published var launchAtLogin = false
+    @Published var checking = false
     @Published var showInBar = UserDefaults.standard.object(forKey: "showInBar") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showInBar, forKey: "showInBar") }
     }
@@ -52,6 +53,22 @@ final class Model: ObservableObject {
     var barText: String {
         guard showInBar, !stale, let p = fiveHour else { return "" }
         return " \(Int(p.rounded()))%"
+    }
+
+    /// Refresh button: re-read everything, then ask Claude Code for live limits (one tiny Haiku message).
+    func checkLive() {
+        guard !checking else { return }
+        checking = true
+        message = ""
+        refresh()
+        Task.detached {
+            let result = Result { try Limits.fetchLive() }
+            await MainActor.run {
+                self.checking = false
+                if case .failure(let e) = result { self.message = e.localizedDescription }
+                self.refresh()
+            }
+        }
     }
 
     func setHook(_ on: Bool) {
@@ -155,12 +172,13 @@ struct Panel: View {
                 Meter(title: "Current 5-hour window", used: m.fiveHour, window: m.limits?.five_hour, stale: m.stale)
                 Meter(title: "Weekly (7 days)", used: m.sevenDay, window: m.limits?.seven_day, stale: m.stale)
                 Text(m.stale
-                     ? "Out of date: these are from the last reply in a terminal Claude Code session. Use since then (desktop app, browser, phone) is not included. Send a prompt to claude in a terminal to update."
-                     : "From your latest Claude Code reply in a terminal. Only terminal sessions report limits; the desktop app and browser do not.")
+                     ? "Out of date: use since then (desktop app, browser, phone) is not included. Click Refresh to check now."
+                     : "Live as of the time above. Refresh sends one tiny message to Haiku through Claude Code to check.")
                     .font(.caption).foregroundStyle(m.stale ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text(hookHint).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text("Click Refresh to check your 5-hour and weekly limits now (sends one tiny message to Haiku through Claude Code).")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
 
             Divider()
@@ -214,7 +232,10 @@ struct Panel: View {
             HStack {
                 Text("Usage Meter \(appVersion)").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Refresh") { m.refresh() }
+                if m.checking { ProgressView().controlSize(.small) }
+                Button(m.checking ? "Checking…" : "Refresh") { m.checkLive() }
+                    .disabled(m.checking)
+                    .help("Re-reads the logs and asks Claude Code for your live limits (about 1,000 Haiku tokens).")
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }
         }
@@ -324,6 +345,13 @@ enum Main {
         let args = CommandLine.arguments
         if args.contains("--statusline") { Limits.statusLineMain(); return }
         if args.contains("--version") { print(appVersion); return }
+        if args.contains("--fetch-limits") {
+            do {
+                let s = try Limits.fetchLive()
+                print("5h \(s.five_hour.map { "\($0.used_percentage)%" } ?? "-") · 7d \(s.seven_day.map { "\($0.used_percentage)%" } ?? "-")")
+            } catch { print(error.localizedDescription); exit(1) }
+            return
+        }
         if let i = args.firstIndex(of: "--set-hook"), i + 1 < args.count {
             do { try Limits.setHook(args[i + 1] == "on"); print("ok") } catch { print(error.localizedDescription); exit(1) }
             return
