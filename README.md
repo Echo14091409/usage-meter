@@ -43,7 +43,7 @@ Other options: `--fetch-limits` (the Refresh check from Terminal), `--background
 ## Limits of this approach
 
 - Without a Refresh, the plan figures are only as fresh as your last terminal Claude Code reply.
-- Each Refresh uses a little of your plan (about 1,000 Haiku tokens). The app never refreshes by itself.
+- Each check uses about 1,070 Haiku tokens (2 in, 4 out, ~1,060 for Claude Code's minimal setup). Automatic checks (Off / 2 / 5 / 15 / 30 min, default 5) use about 12k tokens an hour at 5 min and pause after 10 minutes without keyboard or mouse use.
 - Needs Claude Code installed and signed in with a Claude plan; with an API key there are no plan limits to show.
 
 ## Uninstall

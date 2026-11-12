@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import ServiceManagement
+import CoreGraphics
 
 let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
 
@@ -12,6 +13,12 @@ final class Model: ObservableObject {
     @Published var message = ""
     @Published var launchAtLogin = false
     @Published var checking = false
+    /// Minutes between automatic live checks; 0 = off.
+    @Published var autoMinutes = UserDefaults.standard.object(forKey: "autoMinutes") as? Int ?? 5 {
+        didSet { UserDefaults.standard.set(autoMinutes, forKey: "autoMinutes") }
+    }
+    /// Automatic checks pause after this long without keyboard or mouse input.
+    static let idlePause: TimeInterval = 10 * 60
     @Published var showInBar = UserDefaults.standard.object(forKey: "showInBar") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showInBar, forKey: "showInBar") }
     }
@@ -22,8 +29,9 @@ final class Model: ObservableObject {
     func start() {
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in self?.refresh(); self?.autoCheckIfDue() }
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.autoCheckIfDue() }
     }
 
     func refresh() {
@@ -53,6 +61,21 @@ final class Model: ObservableObject {
     var barText: String {
         guard showInBar, !stale, let p = fiveHour else { return "" }
         return " \(Int(p.rounded()))%"
+    }
+
+    /// Seconds since the last keyboard, mouse or trackpad input anywhere on the Mac.
+    static var idleSeconds: TimeInterval {
+        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+    }
+
+    var autoPausedForIdle: Bool { autoMinutes > 0 && Model.idleSeconds > Model.idlePause }
+
+    /// Runs a live check when automatic checks are on, the numbers are older than the interval,
+    /// and someone has used the Mac in the last 10 minutes.
+    func autoCheckIfDue() {
+        guard autoMinutes > 0, !checking, !autoPausedForIdle else { return }
+        let age = limits.map { Date().timeIntervalSince($0.asOf) } ?? .infinity
+        if age >= Double(autoMinutes * 60) - 15 { checkLive() }
     }
 
     /// Refresh button: re-read everything, then ask Claude Code for live limits (one tiny Haiku message).
@@ -172,8 +195,9 @@ struct Panel: View {
                 Meter(title: "Current 5-hour window", used: m.fiveHour, window: m.limits?.five_hour, stale: m.stale)
                 Meter(title: "Weekly (7 days)", used: m.sevenDay, window: m.limits?.seven_day, stale: m.stale)
                 Text(m.stale
-                     ? "Out of date: use since then (desktop app, browser, phone) is not included. Click Refresh to check now."
-                     : "Live as of the time above. Refresh sends one tiny message to Haiku through Claude Code to check.")
+                     ? (m.autoPausedForIdle ? "Out of date while you were away; it updates once you use the Mac again, or click Refresh."
+                                            : "Out of date: use since then (desktop app, browser, phone) is not included. Click Refresh to check now.")
+                     : "Live as of the time above. Each check sends one tiny message to Haiku through Claude Code.")
                     .font(.caption).foregroundStyle(m.stale ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -223,6 +247,23 @@ struct Panel: View {
             if !m.message.isEmpty {
                 Text(m.message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            HStack {
+                Text("Check limits automatically")
+                Spacer()
+                Picker("", selection: $m.autoMinutes) {
+                    Text("Off").tag(0)
+                    Text("Every 2 min").tag(2)
+                    Text("Every 5 min").tag(5)
+                    Text("Every 15 min").tag(15)
+                    Text("Every 30 min").tag(30)
+                }
+                .labelsHidden()
+                .fixedSize()
+            }
+            Text(m.autoMinutes == 0
+                 ? "Only when you click Refresh."
+                 : "About \(1_070 * 60 / m.autoMinutes / 1000)k Haiku tokens an hour. Pauses after 10 minutes without keyboard or mouse use\(m.autoPausedForIdle ? " (paused now)" : "").")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Toggle("Show 5-hour % in the menu bar", isOn: $m.showInBar)
             if #available(macOS 13.0, *) {
                 Toggle("Open at login", isOn: Binding(get: { m.launchAtLogin }, set: { m.setLaunchAtLogin($0) }))
