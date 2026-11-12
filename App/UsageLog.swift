@@ -6,6 +6,12 @@ struct Reply {
     let model: String
     let input: Int, output: Int, cacheWrite: Int, cacheRead: Int
     var total: Int { input + output + cacheWrite + cacheRead }
+    /// Rough relative cost (API list-price ratios), used only to split a known % across days.
+    var weight: Double {
+        let m = model.lowercased()
+        let inRate = m.contains("haiku") ? 1.0 : m.contains("sonnet") ? 3.0 : 5.0
+        return inRate * (Double(input) + 1.25 * Double(cacheWrite) + 0.1 * Double(cacheRead) + 5 * Double(output))
+    }
 }
 
 struct Totals {
@@ -23,6 +29,7 @@ struct UsageSummary {
     var firstIn5h: Date?                              // oldest reply inside the 5-hour window
     var lastReply: Date?
     var files = 0
+    var activity: [(time: Date, weight: Double)] = []   // every reply in the last 14 days, for estimates
 }
 
 /// Reads Claude Code's local session logs. Only the `usage` numbers, model and time are kept;
@@ -100,6 +107,7 @@ final class UsageLog {
             }
             if r.time >= startToday { s.today.add(r) }
             if r.time >= start7d { s.last7d.add(r); models[r.model, default: Totals()].add(r) }
+            if r.time >= now.addingTimeInterval(-14 * 86400) { s.activity.append((r.time, r.weight)) }
             let d = cal.startOfDay(for: r.time)
             if d > cal.date(byAdding: .day, value: -7, to: startToday)! { days[d, default: 0] += r.total }
         }

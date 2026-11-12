@@ -14,7 +14,7 @@ final class Model: ObservableObject {
     @Published var launchAtLogin = false
     @Published var checking = false
     /// % of the weekly limit used per day, last 7 days (whole account).
-    @Published var daily: [(day: Date, pct: Double?)] = []
+    @Published var daily: [History.Day] = []
     @Published var historySince: Date?
     /// Minutes between automatic live checks; 0 = off.
     @Published var autoMinutes = UserDefaults.standard.object(forKey: "autoMinutes") as? Int ?? 5 {
@@ -40,8 +40,8 @@ final class Model: ObservableObject {
     func refresh() {
         limits = Limits.load()
         let h = History.load()
-        daily = History.daily(h)
         historySince = h.first.map { Date(timeIntervalSince1970: $0.t) }
+        daily = History.daily(h, activity: usage.activity)
         hook = Limits.hookState()
         if #available(macOS 13.0, *) { launchAtLogin = SMAppService.mainApp.status == .enabled }
         guard !scanning else { return }
@@ -49,7 +49,10 @@ final class Model: ObservableObject {
         let log = self.log
         Task.detached {
             let s = log.summary()
-            await MainActor.run { self.usage = s; self.scanning = false }
+            await MainActor.run {
+                self.usage = s; self.scanning = false
+                self.daily = History.daily(History.load(), activity: s.activity)
+            }
         }
     }
 
@@ -164,23 +167,25 @@ struct Meter: View {
 }
 
 struct DayBars: View {
-    let days: [(day: Date, pct: Double?)]
+    let days: [History.Day]
     var body: some View {
         let peak = max(days.compactMap(\.pct).max() ?? 0, 5)
         HStack(alignment: .bottom, spacing: 6) {
             ForEach(days.indices, id: \.self) { i in
-                let p = days[i].pct
+                let d = days[i]
                 VStack(spacing: 3) {
-                    Text(p.map { "\(Int($0.rounded()))" } ?? "")
+                    Text(d.pct.map { (d.estimated ? "≈" : "") + "\(Int($0.rounded()))%" } ?? "–")
                         .font(.system(size: 9).monospacedDigit()).foregroundStyle(.secondary)
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(p == nil ? Color.secondary.opacity(0.12)
-                              : i == days.count - 1 ? Color.accentColor : Color.secondary.opacity(0.45))
-                        .frame(height: p.map { max(2, 40 * CGFloat($0 / peak)) } ?? 2)
-                    Text(Self.label(days[i].day)).font(.system(size: 9)).foregroundStyle(.secondary)
+                        .fill(d.pct == nil ? Color.secondary.opacity(0.12)
+                              : (i == days.count - 1 ? Color.accentColor : Color.secondary)
+                                .opacity(d.estimated ? 0.45 : (i == days.count - 1 ? 1 : 0.6)))
+                        .frame(height: d.pct.map { max(2, 40 * CGFloat($0 / peak)) } ?? 2)
+                    Text(Self.label(d.day)).font(.system(size: 9)).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
-                .help(p.map { "\(String(format: "%.0f", $0))% of the weekly limit" } ?? "No readings yet for this day")
+                .help(d.pct.map { String(format: "%@%.1f%% of the weekly limit", d.estimated ? "about " : "", $0) }
+                      ?? "Before this week's data: not known")
             }
         }
         .frame(height: 72, alignment: .bottom)
@@ -212,8 +217,10 @@ struct Panel: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Weekly limit used per day").font(.subheadline.weight(.medium)).padding(.top, 2)
                 DayBars(days: m.daily)
-                Text("Whole account: chat, apps, phone and Claude Code. Counted in 1% steps from the checks"
-                     + (m.historySince.map { " since \(Self.dayFormat.string(from: $0))" } ?? "") + ".")
+                Text("Whole account: chat, apps, phone and Claude Code, in 1% steps."
+                     + (m.daily.contains { $0.estimated } ? m.historySince.map {
+                        " ≈ before \(Self.timeFormat.string(from: $0)): the week's % at that time, split by when Claude Code ran on this Mac." } ?? "" : "")
+                     + (m.daily.contains { $0.pct == nil } ? " – = before this week, no data." : ""))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Click Refresh to check your 5-hour and weekly limits now (sends one tiny message to Haiku through Claude Code).")
@@ -306,7 +313,7 @@ struct Panel: View {
         }
     }
 
-    static let dayFormat: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE d MMM"; return f }()
+    static let timeFormat: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE HH:mm"; return f }()
 
     func stat(_ t: String, _ n: Int) -> some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -386,6 +393,7 @@ func screenshot(to path: String, dark: Bool) -> Bool {
     m.historySince = h.first.map { Date(timeIntervalSince1970: $0.t) }
     m.hook = Limits.hookState()
     m.usage = m.log.summary()
+    m.daily = History.daily(History.load(), activity: m.usage.activity)
     let host = NSHostingView(rootView: Panel(m: m).background(Color(NSColor.windowBackgroundColor)))
     host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
     let size = host.fittingSize
