@@ -66,6 +66,7 @@ enum Limits {
             try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
             if let d = try? JSONEncoder().encode(snap) { try? d.write(to: Paths.snapshot, options: .atomic) }
         }
+        if let w = seven, w.resetDate > now { History.record(w, at: asOf) }
         return snap
     }
 

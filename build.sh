@@ -4,7 +4,7 @@
 set -e
 here=${0:A:h}; app="$here/build/Usage Meter.app"; obj="$here/build/obj"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$obj"
-src=("$here/App/UsageMeter.swift" "$here/App/UsageLog.swift" "$here/App/Limits.swift" "$here/App/Gauge.swift")
+src=("$here/App/UsageMeter.swift" "$here/App/UsageLog.swift" "$here/App/Limits.swift" "$here/App/Gauge.swift" "$here/App/History.swift")
 if [[ ! -f "$here/App/AppIcon.icns" ]]; then
   swiftc -swift-version 5 "$here/App/Gauge.swift" "$here/tools/icon/main.swift" -o "$obj/make-icon"
   "$obj/make-icon" "$obj/icon.png"; set_="$obj/AppIcon.iconset"; mkdir -p "$set_"

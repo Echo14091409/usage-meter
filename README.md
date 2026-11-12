@@ -11,7 +11,8 @@ It uses only what Claude Code itself provides on your Mac: no claude.ai cookies,
 | Section | Source | Notes |
 |---|---|---|
 | **Plan limits**: 5-hour and weekly % used, reset times | 1. **Refresh**: one tiny message to Haiku through your own Claude Code (`claude -p … --output-format stream-json`), which prints a `rate_limit_event`. 2. Claude Code's documented status line field `rate_limits` ([docs](https://code.claude.com/docs/en/statusline)) after each reply in a terminal session | Pro, Max and Ultra plans. Numbers are dated by when they were reported and greyed out after 20 minutes. A Refresh costs about 1,000 Haiku tokens of your 5-hour allowance. |
-| **Claude Code tokens**: last 5 h, today, 7 days, per model, 7-day chart | Claude Code's session logs in `~/.claude/projects` | Includes cached input, so totals are large. Anthropic calls the log format internal, so this part can break after a Claude Code update. |
+| **Weekly limit used per day** (7-day chart, whole account) | Each limit reading is saved to `~/Library/Application Support/Usage Meter/history.json`; a day's bar is how much the weekly % rose that day | 1% steps; history starts when you install 0.6.0; use while the Mac is off lands on the next day it checks. |
+| **Claude Code tokens**: last 5 h, today, 7 days, per model | Claude Code's session logs in `~/.claude/projects` | Includes cached input, so totals are large. Anthropic calls the log format internal, so this part can break after a Claude Code update. |
 
 The gauge needle in the menu bar follows the 5-hour figure, with the % beside it while it is fresh.
 

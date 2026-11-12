@@ -13,6 +13,9 @@ final class Model: ObservableObject {
     @Published var message = ""
     @Published var launchAtLogin = false
     @Published var checking = false
+    /// % of the weekly limit used per day, last 7 days (whole account).
+    @Published var daily: [(day: Date, pct: Double?)] = []
+    @Published var historySince: Date?
     /// Minutes between automatic live checks; 0 = off.
     @Published var autoMinutes = UserDefaults.standard.object(forKey: "autoMinutes") as? Int ?? 5 {
         didSet { UserDefaults.standard.set(autoMinutes, forKey: "autoMinutes") }
@@ -36,6 +39,9 @@ final class Model: ObservableObject {
 
     func refresh() {
         limits = Limits.load()
+        let h = History.load()
+        daily = History.daily(h)
+        historySince = h.first.map { Date(timeIntervalSince1970: $0.t) }
         hook = Limits.hookState()
         if #available(macOS 13.0, *) { launchAtLogin = SMAppService.mainApp.status == .enabled }
         guard !scanning else { return }
@@ -158,22 +164,26 @@ struct Meter: View {
 }
 
 struct DayBars: View {
-    let days: [(day: Date, total: Int)]
+    let days: [(day: Date, pct: Double?)]
     var body: some View {
-        let peak = max(days.map(\.total).max() ?? 1, 1)
+        let peak = max(days.compactMap(\.pct).max() ?? 0, 5)
         HStack(alignment: .bottom, spacing: 6) {
             ForEach(days.indices, id: \.self) { i in
+                let p = days[i].pct
                 VStack(spacing: 3) {
+                    Text(p.map { "\(Int($0.rounded()))" } ?? "")
+                        .font(.system(size: 9).monospacedDigit()).foregroundStyle(.secondary)
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(i == days.count - 1 ? Color.accentColor : Color.secondary.opacity(0.45))
-                        .frame(height: max(2, 44 * CGFloat(days[i].total) / CGFloat(peak)))
+                        .fill(p == nil ? Color.secondary.opacity(0.12)
+                              : i == days.count - 1 ? Color.accentColor : Color.secondary.opacity(0.45))
+                        .frame(height: p.map { max(2, 40 * CGFloat($0 / peak)) } ?? 2)
                     Text(Self.label(days[i].day)).font(.system(size: 9)).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
-                .help("\(short(days[i].total)) tokens")
+                .help(p.map { "\(String(format: "%.0f", $0))% of the weekly limit" } ?? "No readings yet for this day")
             }
         }
-        .frame(height: 60, alignment: .bottom)
+        .frame(height: 72, alignment: .bottom)
     }
     static func label(_ d: Date) -> String { let f = DateFormatter(); f.dateFormat = "EEEEE"; return f.string(from: d) }
 }
@@ -200,6 +210,11 @@ struct Panel: View {
                      : "Live as of the time above. Each check sends one tiny message to Haiku through Claude Code.")
                     .font(.caption).foregroundStyle(m.stale ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("Weekly limit used per day").font(.subheadline.weight(.medium)).padding(.top, 2)
+                DayBars(days: m.daily)
+                Text("Whole account: chat, apps, phone and Claude Code. Counted in 1% steps from the checks"
+                     + (m.historySince.map { " since \(Self.dayFormat.string(from: $0))" } ?? "") + ".")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Click Refresh to check your 5-hour and weekly limits now (sends one tiny message to Haiku through Claude Code).")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -213,7 +228,6 @@ struct Panel: View {
                 stat("Today", m.usage.today.total)
                 stat("7 days", m.usage.last7d.total)
             }
-            DayBars(days: m.usage.byDay)
             if !m.usage.byModel7d.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(m.usage.byModel7d.prefix(4), id: \.model) { row in
@@ -292,6 +306,8 @@ struct Panel: View {
         }
     }
 
+    static let dayFormat: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE d MMM"; return f }()
+
     func stat(_ t: String, _ n: Int) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(short(n)).font(.title3.monospacedDigit().weight(.semibold))
@@ -365,6 +381,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 func screenshot(to path: String, dark: Bool) -> Bool {
     let m = Model()
     m.limits = Limits.load()
+    let h = History.load()
+    m.daily = History.daily(h)
+    m.historySince = h.first.map { Date(timeIntervalSince1970: $0.t) }
     m.hook = Limits.hookState()
     m.usage = m.log.summary()
     let host = NSHostingView(rootView: Panel(m: m).background(Color(NSColor.windowBackgroundColor)))
