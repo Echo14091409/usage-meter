@@ -50,3 +50,7 @@ Other options: `--fetch-limits` (the Refresh check from Terminal), `--background
 ## Uninstall
 
 Click **Disconnect** in the panel, quit the app, and delete `/Applications/Usage Meter.app` and `~/Library/Application Support/Usage Meter`.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
