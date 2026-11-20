@@ -157,6 +157,48 @@ check(byProject.map(\.project) == ["beta", "alpha"], "projects by weight, got \(
 check(byProject.first?.totals.output == 1000 && byProject.last?.totals.replies == 2, "project totals")
 check(abs(byProject.reduce(0) { $0 + $1.share } - 1) < 0.001, "shares add up to 1")
 
+
+// 11. Accounts: the main one always exists; added ones get their own folders, kept apart from the main data.
+var accts = Accounts.load()
+check(accts.map(\.id) == [Accounts.mainID], "only the main account at first, got \(accts.map(\.id))")
+check(Accounts.dataDir(Accounts.mainID) == Paths.support && Accounts.configDir(Accounts.mainID) == nil, "main account uses the normal places")
+let a2 = Accounts.add(), a3 = Accounts.add()
+accts = Accounts.load()
+check(accts.count == 3 && a2.id != a3.id && accts.map(\.id) == [Accounts.mainID, a2.id, a3.id], "two accounts added and saved")
+check(a2.name == "Account 2" && a3.name == "Account 3", "default names, got \(a2.name), \(a3.name)")
+let cfg2 = Accounts.configDir(a2.id)!
+var isDir: ObjCBool = false
+check(FileManager.default.fileExists(atPath: cfg2.path, isDirectory: &isDir) && isDir.boolValue, "login folder created for the user")
+check(cfg2.path.hasPrefix(Paths.support.path) && cfg2 != Accounts.configDir(a3.id)!, "each account has its own login folder under the app's data")
+Accounts.rename(a2.id, to: "work@example.com")
+check(Accounts.load()[1].name == "work@example.com", "renamed")
+//    Limits and history of an added account do not touch the main account's files.
+let mainBefore = try? Data(contentsOf: Paths.snapshot)
+Limits.store(five: nil, seven: Window(used_percentage: 77, resets_at: future), models: [], asOf: Date(), in: Accounts.dataDir(a2.id))
+check(Limits.load(in: Accounts.dataDir(a2.id))?.seven_day?.used_percentage == 77, "added account's limits stored in its folder")
+check((try? Data(contentsOf: Paths.snapshot)) == mainBefore, "main snapshot untouched")
+check(History.load(in: Accounts.dataDir(a2.id)).last?.s == 77 && History.load().last?.s != 77, "history kept per account")
+//    The sign-in script sets the login folder and starts Claude Code's own sign-in; paths are quoted for the shell.
+let script = Accounts.signInScript(for: a2.id, claude: "/tmp/it's here/claude")
+check(script.contains("export CLAUDE_CONFIG_DIR='\(cfg2.path)'"), "script sets the login folder")
+check(script.contains(#"'/tmp/it'\''s here/claude' auth login"#), "script runs claude auth login, quoted: \(script)")
+//    The script file is written executable and is valid zsh (syntax check only; it is not run).
+let cmd = try? Accounts.writeSignInCommand(for: a2.id, claude: "/tmp/it's here/claude")
+check(cmd.map { FileManager.default.isExecutableFile(atPath: $0.path) } == true, "sign-in file is executable")
+check(cmd.map { Limits.runProcess("/bin/zsh", ["-n", $0.path], timeout: 10).code } == 0, "sign-in file is valid zsh")
+//    Reading the sign-in state Claude Code prints.
+var st = Accounts.parseStatus(#"{"loggedIn":true,"authMethod":"claude.ai","email":"work@example.com","subscriptionType":"max"}"#)
+check(st.loggedIn && st.email == "work@example.com" && st.plan == "max", "signed-in status read")
+st = Accounts.parseStatus(#"{"loggedIn":false,"authMethod":"none"}"#)
+check(!st.loggedIn && st.email == nil, "signed-out status read")
+check(!Accounts.parseStatus("not json").loggedIn, "garbage = not signed in")
+//    Removing: gone from the list, folder gone, main never removable.
+Accounts.remove(a2.id)
+check(Accounts.load().map(\.id) == [Accounts.mainID, a3.id], "removed from the list")
+check(!FileManager.default.fileExists(atPath: Accounts.dataDir(a2.id).path), "its folder is gone")
+Accounts.remove(Accounts.mainID)
+check(Accounts.load().first?.id == Accounts.mainID, "main account cannot be removed")
+
 try? FileManager.default.removeItem(at: home)
 
 print(failed == 0 ? "all tests passed" : "\(failed) failed")

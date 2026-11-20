@@ -19,6 +19,8 @@ It uses only what Claude Code itself provides on your Mac: no claude.ai cookies,
 
 The gauge needle in the menu bar follows the 5-hour figure, with the % beside it while it is fresh.
 
+How it compares with other Claude usage meters (open source and paid): [docs/COMPARISON.md](docs/COMPARISON.md).
+
 ## Install
 
 Needs Xcode or the Command Line Tools (`xcode-select --install`). No other dependencies. `zsh build.sh test` runs the tests.
@@ -28,6 +30,18 @@ zsh build.sh install
 ```
 
 This builds a universal app, copies it to `/Applications` and opens it. Then, in the panel, click **Connect to Claude Code**: it adds a `statusLine` entry to `~/.claude/settings.json` (a backup is kept as `settings.json.bak-usage-meter`). It will not replace a status line you already have.
+
+## Several accounts
+
+Click **Add account…** in the panel. Usage Meter makes a separate Claude Code login for that account inside its own data folder and opens Terminal on Claude Code's sign-in (`claude auth login`); you sign in in the browser as usual, and the account appears in the panel a few seconds later, named by its email. There are no folders to create and nothing to configure.
+
+- The picker at the top chooses which account the panel, the menu bar and History show. The other accounts each get a one-line summary (`5h 12% · week 40%`); click it to switch.
+- Every check reads all accounts. Each account keeps its own history.
+- Your main Claude Code login is not touched: an added account lives in `~/Library/Application Support/Usage Meter/accounts/<id>/claude`, which Claude Code uses because the app sets `CLAUDE_CONFIG_DIR` for its own calls only.
+- **Remove this one…** signs that extra login out and moves its folder to the Trash.
+- The status line connection (live updates while you work in a terminal) is for the main account; added accounts update at each check.
+
+This is for accounts that are yours, for example a personal and a work plan. Check Anthropic's terms before using several subscriptions to get around one plan's limits.
 
 ## Open
 
@@ -42,7 +56,7 @@ This builds a universal app, copies it to `/Applications` and opens it. Then, in
 - `UsageMeter --statusline` is the status line command Claude Code runs. It reads Claude Code's JSON from stdin, saves the limits to `~/Library/Application Support/Usage Meter/limits.json` and prints a short line (`Opus · 5h 42% · 7d 71%`). The time of the session's last reply, from its transcript, dates the numbers, so an idle session cannot overwrite fresher ones.
 - The app reads that file and the session logs every 30 seconds (only changed log files are re-read).
 
-Other options: `--fetch-limits` (the Refresh check from Terminal), `--background` (start without opening the panel), `--screenshot out.png [dark]`, `--screenshot-history out.png [dark]`, `--set-hook on|off`, `--version`; `UM_HOME=<dir>` redirects the settings and snapshot paths for testing.
+Other options: `--fetch-limits` (the Refresh check from Terminal, all accounts), `--background` (start without opening the panel), `--screenshot out.png [dark]`, `--screenshot-history out.png [dark]`, `--set-hook on|off`, `--version`; `UM_HOME=<dir>` redirects the settings and snapshot paths for testing.
 
 ## Limits of this approach
 

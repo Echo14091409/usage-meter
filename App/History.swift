@@ -13,18 +13,20 @@ struct Reading: Codable {
 }
 
 enum History {
-    static var file: URL { Paths.support.appendingPathComponent("history.json") }
+    static var file: URL { file(in: Paths.support) }
+    static func file(in dir: URL) -> URL { dir.appendingPathComponent("history.json") }
     static let keepDays = 60.0
 
-    static func load() -> [Reading] {
-        guard let d = try? Data(contentsOf: file),
+    /// `dir` is the account's data folder; the default is the main account's.
+    static func load(in dir: URL = Paths.support) -> [Reading] {
+        guard let d = try? Data(contentsOf: file(in: dir)),
               let a = try? JSONDecoder().decode([Reading].self, from: d) else { return [] }
         return a.sorted { $0.t < $1.t }
     }
 
     /// Adds a fresh reading. Unchanged readings are kept at most every 30 minutes so the file stays small.
-    static func record(five: Window?, seven w: Window, models: [ModelWindow]?, at t: Date) {
-        var a = load()
+    static func record(five: Window?, seven w: Window, models: [ModelWindow]?, at t: Date, in dir: URL = Paths.support) {
+        var a = load(in: dir)
         let now = t.timeIntervalSince1970
         let five = five.flatMap { $0.resets_at > now ? $0 : nil }      // a window that has reset says nothing
         let x = Reading(t: now, s: w.used_percentage, r: w.resets_at, f: five?.used_percentage, fr: five?.resets_at,
@@ -38,8 +40,8 @@ enum History {
         a.append(x)
         let cutoff = Date().timeIntervalSince1970 - keepDays * 86400
         a.removeAll { $0.t < cutoff }
-        try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
-        if let d = try? JSONEncoder().encode(a) { try? d.write(to: file, options: .atomic) }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        if let d = try? JSONEncoder().encode(a) { try? d.write(to: file(in: dir), options: .atomic) }
     }
 
     /// Reset times can wobble by a few seconds between reports.

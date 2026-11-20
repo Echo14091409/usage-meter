@@ -41,8 +41,9 @@ enum Paths {
 }
 
 enum Limits {
-    static func load() -> LimitSnapshot? {
-        guard let d = try? Data(contentsOf: Paths.snapshot) else { return nil }
+    /// `dir` is the account's data folder; the default is the main account's.
+    static func load(in dir: URL = Paths.support) -> LimitSnapshot? {
+        guard let d = try? Data(contentsOf: dir.appendingPathComponent("limits.json")) else { return nil }
         return try? JSONDecoder().decode(LimitSnapshot.self, from: d)
     }
 
@@ -69,19 +70,22 @@ enum Limits {
     /// from the old snapshot until it resets. `models` nil = this report says nothing about model limits
     /// (keep the stored ones until they reset); an empty list = the plan has none. Returns what is stored afterwards.
     @discardableResult
-    static func store(five: Window?, seven: Window?, models: [ModelWindow]? = nil, asOf: Date) -> LimitSnapshot {
+    static func store(five: Window?, seven: Window?, models: [ModelWindow]? = nil, asOf: Date,
+                      in dir: URL = Paths.support) -> LimitSnapshot {
         let now = Date()
-        let prev = load()
+        let prev = load(in: dir)
         func keep(_ w: Window?) -> Window? { w.flatMap { $0.resetDate > now ? $0 : nil } }
         guard prev == nil || asOf >= prev!.asOf.addingTimeInterval(-1) else { return prev! }
         let snap = LimitSnapshot(five_hour: five ?? keep(prev?.five_hour), seven_day: seven ?? keep(prev?.seven_day),
                                  models: models ?? prev?.models?.filter { $0.window.resetDate > now },
                                  updated_at: now.timeIntervalSince1970, as_of: asOf.timeIntervalSince1970)
         if snap.five_hour != nil || snap.seven_day != nil {
-            try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
-            if let d = try? JSONEncoder().encode(snap) { try? d.write(to: Paths.snapshot, options: .atomic) }
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            if let d = try? JSONEncoder().encode(snap) {
+                try? d.write(to: dir.appendingPathComponent("limits.json"), options: .atomic)
+            }
         }
-        if let w = seven, w.resetDate > now { History.record(five: five, seven: w, models: models, at: asOf) }
+        if let w = seven, w.resetDate > now { History.record(five: five, seven: w, models: models, at: asOf, in: dir) }
         return snap
     }
 
@@ -103,16 +107,19 @@ enum Limits {
 
     /// Asks Claude Code for its own `/usage` report (your own subscription, no settings, no MCP, nothing
     /// saved). `/usage` is a local command: no message goes to a model and it uses no tokens.
-    static func fetchLive() throws -> LimitSnapshot {
+    /// `account` picks the login: the main one, or an added one through its own `CLAUDE_CONFIG_DIR`.
+    static func fetchLive(account: String = Accounts.mainID) throws -> LimitSnapshot {
         guard let claude = claudePath() else { throw Problem("Claude Code (the claude command) was not found.") }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("usage-meter-check")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let data = Accounts.dataDir(account)
         let r = runProcess(claude, ["-p", "/usage", "--output-format", "json", "--strict-mcp-config",
-                                    "--setting-sources", "", "--no-session-persistence"], cwd: dir, timeout: 60)
+                                    "--setting-sources", "", "--no-session-persistence"], cwd: dir,
+                           env: Accounts.environment(account), timeout: 60)
         let o = (try? JSONSerialization.jsonObject(with: Data(r.out.utf8))) as? [String: Any]
         let text = o?["result"] as? String ?? ""
         // Exact reset times from the last report (the status line gives them to the second) to snap to.
-        let now = Date(), prev = load()
+        let now = Date(), prev = load(in: data)
         func known(_ w: Window?) -> Double? { w.flatMap { $0.resetDate > now ? $0.resets_at : nil } }
         let u = parseUsage(text, now: now, fiveReset: known(prev?.five_hour), weekReset: known(prev?.seven_day))
         guard o?["is_error"] as? Bool != true, u.five != nil || u.seven != nil else {
@@ -121,14 +128,16 @@ enum Limits {
                 let hint = r.err.split(separator: "\n").last.map(String.init) ?? "exit code \(r.code)"
                 throw Problem("Claude Code failed: \(hint)")
             }
-            throw Problem("Claude Code answered but reported no plan limits (API-key login, or a changed format).")
+            throw Problem(account == Accounts.mainID
+                          ? "Claude Code answered but reported no plan limits (API-key login, or a changed format)."
+                          : "This account reported no plan limits: it is not signed in yet, or has no Claude plan.")
         }
         // The rest of the report says what drives the use (skills, MCP servers, subagents); kept for the History window.
         if let i = text.range(of: "What's contributing") {
-            try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
-            try? Data(text[i.lowerBound...].utf8).write(to: Paths.contributing, options: .atomic)
+            try? FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
+            try? Data(text[i.lowerBound...].utf8).write(to: data.appendingPathComponent("contributing.txt"), options: .atomic)
         }
-        return store(five: u.five, seven: u.seven, models: u.models, asOf: now)
+        return store(five: u.five, seven: u.seven, models: u.models, asOf: now, in: data)
     }
 
     // MARK: reading the `/usage` text
@@ -206,8 +215,10 @@ enum Limits {
 
     struct ProcResult { var out = "", err = "", code: Int32 = -1, timedOut = false }
 
-    static func runProcess(_ path: String, _ args: [String], cwd: URL? = nil, timeout: TimeInterval) -> ProcResult {
+    static func runProcess(_ path: String, _ args: [String], cwd: URL? = nil, env: [String: String] = [:],
+                           timeout: TimeInterval) -> ProcResult {
         let p = Process()
+        if !env.isEmpty { p.environment = ProcessInfo.processInfo.environment.merging(env) { _, new in new } }
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
         if let cwd = cwd { p.currentDirectoryURL = cwd }

@@ -31,7 +31,31 @@ final class Model: ObservableObject {
     @Published var showInBar = UserDefaults.standard.object(forKey: "showInBar") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showInBar, forKey: "showInBar") }
     }
-    let log = UsageLog()
+    /// The logins shown; the main one first.
+    @Published var accounts: [Account] = Accounts.load()
+    /// Which account the panel, the menu bar and the History window show.
+    @Published var selected = UserDefaults.standard.string(forKey: "selectedAccount") ?? Accounts.mainID {
+        didSet {
+            guard selected != oldValue else { return }
+            UserDefaults.standard.set(selected, forKey: "selectedAccount")
+            usage = UsageSummary(); message = ""
+            refresh()
+        }
+    }
+    /// The other accounts' last readings, for the one-line summaries.
+    @Published var others: [(account: Account, limits: LimitSnapshot?)] = []
+    /// An added account whose sign-in in Terminal the app is waiting for.
+    @Published var waitingFor: String?
+    private var logs: [String: UsageLog] = [:]
+    /// The selected account's session logs (an added account has its own folder of them).
+    var log: UsageLog {
+        if let l = logs[selected] { return l }
+        let l = Accounts.configDir(selected).map { UsageLog(root: $0.appendingPathComponent("projects")) } ?? UsageLog()
+        logs[selected] = l
+        return l
+    }
+    var isMain: Bool { selected == Accounts.mainID }
+    var selectedName: String { accounts.first { $0.id == selected }?.name ?? "" }
     private var timer: Timer?
     private var scanning = false
 
@@ -44,22 +68,28 @@ final class Model: ObservableObject {
     }
 
     func refresh() {
-        limits = Limits.load()
-        let h = History.load()
+        accounts = Accounts.load()
+        if !accounts.contains(where: { $0.id == selected }) { selected = Accounts.mainID; return }
+        let dir = Accounts.dataDir(selected)
+        limits = Limits.load(in: dir)
+        others = accounts.filter { $0.id != selected }.map { ($0, Limits.load(in: Accounts.dataDir($0.id))) }
+        let h = History.load(in: dir)
         history = h
-        contributing = (try? String(contentsOf: Paths.contributing, encoding: .utf8)) ?? ""
+        contributing = (try? String(contentsOf: dir.appendingPathComponent("contributing.txt"), encoding: .utf8)) ?? ""
         historySince = h.first.map { Date(timeIntervalSince1970: $0.t) }
         daily = History.daily(h, activity: usage.activity)
         hook = Limits.hookState()
         if #available(macOS 13.0, *) { launchAtLogin = SMAppService.mainApp.status == .enabled }
         guard !scanning else { return }
         scanning = true
-        let log = self.log
+        let log = self.log, id = selected
         Task.detached {
             let s = log.summary()
             await MainActor.run {
-                self.usage = s; self.scanning = false
-                self.daily = History.daily(History.load(), activity: s.activity)
+                self.scanning = false
+                guard id == self.selected else { self.refresh(); return }     // the account was switched meanwhile
+                self.usage = s
+                self.daily = History.daily(History.load(in: Accounts.dataDir(id)), activity: s.activity)
             }
         }
     }
@@ -104,13 +134,73 @@ final class Model: ObservableObject {
         checking = true
         message = ""
         refresh()
+        let all = accounts, shown = selected
         Task.detached {
-            let result = Result { try Limits.fetchLive() }
+            var problem: String?
+            for a in all {
+                do {
+                    _ = try Limits.fetchLive(account: a.id)
+                    // An added account is called by its email once Claude Code knows it.
+                    if a.id != Accounts.mainID, a.name.hasPrefix("Account "), let e = Accounts.status(a.id).email {
+                        Accounts.rename(a.id, to: e)
+                    }
+                } catch { if a.id == shown { problem = error.localizedDescription } }
+            }
+            let failed = problem
             await MainActor.run {
                 self.checking = false
-                if case .failure(let e) = result { self.message = e.localizedDescription }
+                if let p = failed, shown == self.selected { self.message = p }
                 self.refresh()
             }
+        }
+    }
+
+    /// "Add account": makes the account's folders, then opens Terminal on Claude Code's own sign-in for it.
+    func addAccount() {
+        let a = Accounts.add()
+        accounts = Accounts.load()
+        selected = a.id
+        signIn(a.id)
+    }
+
+    /// Opens Terminal with `claude auth login` for an added account and waits (up to 10 minutes) for it to succeed.
+    func signIn(_ id: String) {
+        guard let claude = Limits.claudePath() else { message = "Claude Code (the claude command) was not found."; return }
+        do { NSWorkspace.shared.open(try Accounts.writeSignInCommand(for: id, claude: claude)) }
+        catch { message = "Could not start the sign-in: \(error.localizedDescription)"; return }
+        waitingFor = id
+        message = "Terminal opened: sign in there with the account to add. This panel updates by itself."
+        Task.detached {
+            for _ in 0..<120 {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard await MainActor.run(body: { self.waitingFor == id }) else { return }
+                let s = Accounts.status(id)
+                if s.loggedIn {
+                    if let e = s.email { Accounts.rename(id, to: e) }
+                    await MainActor.run { self.waitingFor = nil; self.message = ""; self.refresh(); self.checkLive() }
+                    return
+                }
+            }
+            await MainActor.run { if self.waitingFor == id { self.waitingFor = nil; self.message = "No sign-in seen. Click Sign in to try again." } }
+        }
+    }
+
+    /// Asks first, then signs the selected added account out and moves its folder to the Trash.
+    func removeSelected() {
+        guard !isMain else { return }
+        let id = selected, alert = NSAlert()
+        alert.messageText = "Remove \(selectedName) from Usage Meter?"
+        alert.informativeText = "This signs that account out of the extra Claude Code login Usage Meter made for it and moves its saved history to the Trash. Your main Claude Code login and the account itself are not affected."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if waitingFor == id { waitingFor = nil }
+        logs[id] = nil
+        selected = Accounts.mainID
+        Task.detached {
+            Accounts.signOutAndRemove(id)
+            await MainActor.run { self.refresh() }
         }
     }
 
@@ -224,6 +314,14 @@ struct Panel: View {
                     Text(m.limits.map { "As of \(ago($0.asOf)) · from Claude Code" } ?? "No limit data yet")
                         .font(.caption).foregroundStyle(m.stale ? Color.orange : Color.secondary)
                 }
+                if m.accounts.count > 1 {
+                    Spacer()
+                    Picker("", selection: $m.selected) {
+                        ForEach(m.accounts) { Text($0.name).tag($0.id) }
+                    }
+                    .labelsHidden().frame(maxWidth: 150)
+                    .help("Which account this panel, the menu bar and History show.")
+                }
             }
             if m.limits != nil {
                 Meter(title: "Current 5-hour window", used: m.fiveHour, window: m.limits?.five_hour, stale: m.stale,
@@ -233,6 +331,16 @@ struct Panel: View {
                 ForEach(m.modelWeeks, id: \.name) { w in
                     Meter(title: "Weekly, \(w.name) only", used: m.used(w.window), window: w.window, stale: m.stale(w),
                           pace: m.stale(w) ? nil : m.pace(w.window, hours: 168))
+                }
+                ForEach(m.others, id: \.account.id) { o in
+                    Button { m.selected = o.account.id } label: {
+                        HStack {
+                            Text(o.account.name).lineLimit(1)
+                            Spacer()
+                            Text(Self.summary(o.limits)).monospacedDigit().foregroundStyle(.secondary)
+                        }.font(.caption).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).help("Show this account")
                 }
                 Text(m.stale
                      ? (m.autoPausedForIdle ? "Out of date while you were away; it updates once you use the Mac again, or click Refresh."
@@ -252,11 +360,61 @@ struct Panel: View {
                         " ≈ before \(Self.timeFormat.string(from: $0)): the week's % at that time, split by when Claude Code ran on this Mac." } ?? "" : "")
                      + (m.daily.contains { $0.pct == nil } ? " – = before this week, no data." : ""))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            } else {
+            } else if m.isMain {
                 Text("Click Refresh to check your 5-hour and weekly limits now (reads Claude Code's own /usage report; uses no tokens).")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(m.waitingFor == m.selected
+                     ? "Waiting for you to sign in to this account in the Terminal window that opened."
+                     : "This account is not signed in yet.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button("Sign in…") { m.signIn(m.selected) }
             }
 
+            if m.isMain || m.usage.last7d.replies > 0 { tokens }
+
+            Divider()
+
+            if m.isMain {
+            HStack {
+                switch m.hook {
+                case .ours:
+                    Label("Connected to Claude Code", systemImage: "checkmark.circle.fill")
+                        .font(.caption).foregroundStyle(Color.green)
+                    Spacer()
+                    Button("Disconnect") { m.setHook(false) }
+                case .other:
+                    Text("Claude Code uses another status line").font(.caption).foregroundStyle(.secondary)
+                case .none, .unreadable:
+                    Button("Connect to Claude Code") { m.setHook(true) }
+                }
+            }
+            }
+            HStack {
+                Text("Accounts")
+                Spacer()
+                if !m.isMain { Button("Remove this one…") { m.removeSelected() } }
+                Button("Add account…") { m.addAccount() }
+                    .help("Adds another Claude login just for this app. Terminal opens and Claude Code asks you to sign in in the browser; your main Claude Code login is not touched.")
+            }
+            if !m.message.isEmpty {
+                Text(m.message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            settings
+        }
+        .padding(14)
+        .frame(width: 340)
+    }
+
+    /// "5h 12% · week 40%" for another account's line.
+    static func summary(_ l: LimitSnapshot?) -> String {
+        guard let l = l else { return "not signed in yet" }
+        func pct(_ w: Window?) -> String { w.map { "\(Int(($0.resetDate < Date() ? 0 : $0.used_percentage).rounded()))%" } ?? "–" }
+        let old = Date().timeIntervalSince(l.asOf) > Model.staleAfter
+        return (old ? "~" : "") + "5h \(pct(l.five_hour)) · week \(pct(l.seven_day))"
+    }
+
+    @ViewBuilder var tokens: some View {
             Divider()
 
             Text("Claude Code tokens on this Mac").font(.headline)
@@ -279,25 +437,9 @@ struct Panel: View {
             }
             Text("Counted from Claude Code's local session logs; includes cached input. Claude chats in the app or browser are not counted.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
 
-            Divider()
-
-            HStack {
-                switch m.hook {
-                case .ours:
-                    Label("Connected to Claude Code", systemImage: "checkmark.circle.fill")
-                        .font(.caption).foregroundStyle(Color.green)
-                    Spacer()
-                    Button("Disconnect") { m.setHook(false) }
-                case .other:
-                    Text("Claude Code uses another status line").font(.caption).foregroundStyle(.secondary)
-                case .none, .unreadable:
-                    Button("Connect to Claude Code") { m.setHook(true) }
-                }
-            }
-            if !m.message.isEmpty {
-                Text(m.message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+    @ViewBuilder var settings: some View {
             HStack {
                 Text("Check limits automatically")
                 Spacer()
@@ -330,9 +472,6 @@ struct Panel: View {
                     .help("Re-reads the logs and asks Claude Code for your live limits (no tokens).")
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }
-        }
-        .padding(14)
-        .frame(width: 340)
     }
 
     var hookHint: String {
@@ -439,15 +578,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 func screenshot(to path: String, dark: Bool, history: Bool = false) -> Bool {
     let m = Model()
-    m.limits = Limits.load()
-    let h = History.load()
+    let dir = Accounts.dataDir(m.selected)
+    m.limits = Limits.load(in: dir)
+    m.others = m.accounts.filter { $0.id != m.selected }.map { ($0, Limits.load(in: Accounts.dataDir($0.id))) }
+    let h = History.load(in: dir)
     m.history = h
-    m.contributing = (try? String(contentsOf: Paths.contributing, encoding: .utf8)) ?? ""
+    m.contributing = (try? String(contentsOf: dir.appendingPathComponent("contributing.txt"), encoding: .utf8)) ?? ""
     m.daily = History.daily(h)
     m.historySince = h.first.map { Date(timeIntervalSince1970: $0.t) }
     m.hook = Limits.hookState()
     m.usage = m.log.summary()
-    m.daily = History.daily(History.load(), activity: m.usage.activity)
+    m.daily = History.daily(h, activity: m.usage.activity)
     let host = NSHostingView(rootView: (history ? AnyView(HistoryContent(m: m)) : AnyView(Panel(m: m)))
         .background(Color(NSColor.windowBackgroundColor)))
     host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -469,11 +610,17 @@ enum Main {
         if args.contains("--statusline") { Limits.statusLineMain(); return }
         if args.contains("--version") { print(appVersion); return }
         if args.contains("--fetch-limits") {
-            do {
-                let s = try Limits.fetchLive()
-                print("5h \(s.five_hour.map { "\($0.used_percentage)%" } ?? "-") · 7d \(s.seven_day.map { "\($0.used_percentage)%" } ?? "-")"
-                      + (s.models ?? []).map { " · 7d \($0.name) \($0.used_percentage)%" }.joined())
-            } catch { print(error.localizedDescription); exit(1) }
+            var failed = false
+            let all = Accounts.load()
+            for a in all {
+                let label = all.count > 1 ? "\(a.name): " : ""
+                do {
+                    let s = try Limits.fetchLive(account: a.id)
+                    print(label + "5h \(s.five_hour.map { "\($0.used_percentage)%" } ?? "-") · 7d \(s.seven_day.map { "\($0.used_percentage)%" } ?? "-")"
+                          + (s.models ?? []).map { " · 7d \($0.name) \($0.used_percentage)%" }.joined())
+                } catch { print(label + error.localizedDescription); if a.id == Accounts.mainID { failed = true } }
+            }
+            if failed { exit(1) }
             return
         }
         if let i = args.firstIndex(of: "--set-hook"), i + 1 < args.count {
