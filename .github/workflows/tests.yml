@@ -1,0 +1,27 @@
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test (Windows PowerShell 5.1)
+        shell: cmd
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows\UsageMeter.ps1 -SelfTest
+      - name: One check against a stand-in for Claude Code
+        shell: powershell
+        run: |
+          $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows\UsageMeter.ps1 -Once -ClaudePath "$PWD\windows\tests\claude.cmd"
+          Write-Host "got: $out"
+          if ($out -ne '5h 12% | week 33% | Fable 30%') { exit 1 }
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests
+        run: zsh build.sh test
