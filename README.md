@@ -2,7 +2,7 @@
 
 <img src="docs/panel.png" width="320" align="right" alt="Usage Meter panel: plan limits and Claude Code token history">
 
-**macOS only** (12 Monterey or later, Apple silicon and Intel). A menu-bar gauge for your Claude plan limits and your Claude Code token use.
+**macOS only** (12 Monterey or later, Apple silicon and Intel). A menu-bar icon for your Claude plan limits and your Claude Code token use. (Usgae meter for OpenAI etc. are under developent and will appear soon)
 
 It uses only what Claude Code itself provides on your Mac: no claude.ai cookies, no private web endpoints, no API calls of its own.
 
@@ -11,11 +11,11 @@ It uses only what Claude Code itself provides on your Mac: no claude.ai cookies,
 - **No data is collected.** There is no analytics, no telemetry, no crash reporting, no update check and no sync.
 - **The app makes no network connections at all.** It contains no networking code; you can check with `grep -rn "URLSession\|URLRequest" App/` (no matches).
 - **It never holds a login.** It does not read Claude Code's saved token or any browser cookie. It runs the `claude` command and reads what that prints.
-- **The only thing that talks to the internet is Claude Code itself**, which asks Anthropic for your own usage figures, exactly as when you type `/usage` in it.
-- Everything the app keeps (readings, history, settings) stays in `~/Library/Application Support/Usage Meter` on this Mac. Delete that folder and it is gone.
-- Notifications are local macOS notifications; nothing is sent to a server to deliver them.
+- **The only thing that talks to the internet is Claude Code itself**
+- Everything the app keeps (readings, history, settings) stays in `~/Library/Application Support/Usage Meter` on this Mac. 
 
-The screenshots here use made-up data.
+
+
 
 ## What it shows
 
