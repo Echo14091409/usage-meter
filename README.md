@@ -2,7 +2,7 @@
 
 <img src="docs/panel.png" width="320" align="right" alt="Usage Meter panel: plan limits and Claude Code token history">
 
-**macOS** (12 Monterey or later, Apple silicon and Intel), plus an **experimental Windows version** ([below](#windows-experimental)). A menu-bar icon for your Claude plan limits and your Claude Code token use. (Usage meters for OpenAI etc. are under development and will appear soon.)
+**macOS** (12 Monterey or later, Apple silicon and Intel), plus an **experimental Windows version** ([below](#windows-experimental)). A menu-bar icon for your Claude plan limits and your Claude Code token use. (Usgae meter for OpenAI etc. are under developent and will appear soon)
 
 It uses only what Claude Code itself provides on your Mac: no claude.ai cookies, no private web endpoints, no API calls of its own.
 
@@ -13,7 +13,7 @@ It uses only what Claude Code itself provides on your Mac: no claude.ai cookies,
 - **It never holds a login.** It does not read Claude Code's saved token or any browser cookie. It runs the `claude` command and reads what that prints.
 - **The only thing that talks to the internet is Claude Code itself**
 - Everything the app keeps (readings, history, settings) stays in `~/Library/Application Support/Usage Meter` on this Mac. 
-
+- Needs Claude Code installed and signed in with a Claude plan; with an API key there are no plan limits.
 
 
 
@@ -74,7 +74,7 @@ This is for accounts that are yours, for example a personal and a work plan. Che
 
 ## Open
 
-- Click the gauge in the menu bar, or
+- Click the icon in the menu bar, or
 - open **Usage Meter** from Spotlight (⌘ Space), Finder or Launchpad: the panel opens even if the app is already running.
 - **Open at login** starts it quietly in the menu bar (macOS 13+).
 
@@ -87,18 +87,12 @@ This is for accounts that are yours, for example a personal and a work plan. Che
 
 Other options: `--fetch-limits` (the Refresh check from Terminal, all accounts), `--background` (start without opening the panel), `--screenshot out.png [dark]`, `--screenshot-history out.png [dark]`, `--set-hook on|off`, `--version`; `UM_HOME=<dir>` redirects the settings and snapshot paths for testing.
 
-## Planned
+## Planned or suggested
 
-- **ChatGPT plan limits**, next to the Claude ones, if the Codex CLI can report them the same way (the official tool asked on your own Mac, with no login held by this app). Not started; it will not be added through cookies or private endpoints.
+- **ChatGPT plan limits**, next to the Claude ones
 - Desktop widgets.
 - Extra-usage and credit figures, where Claude Code reports them.
 
-## Limits of this approach
-
-- Without a Refresh, the plan figures are only as fresh as your last terminal Claude Code reply.
-- Checks use no tokens (up to 0.7.0 each one sent a tiny Haiku message, about 1,070 tokens). Automatic checks (Off / 2 / 5 / 15 / 30 min, default 5) pause after 10 minutes without keyboard or mouse use.
-- `/usage` reports whole percents as text. If Claude Code changes that text, checks fail with "reported no plan limits" until the parser is updated; the status line path keeps working.
-- Needs Claude Code installed and signed in with a Claude plan; with an API key there are no plan limits to show.
 
 ## Uninstall
 
