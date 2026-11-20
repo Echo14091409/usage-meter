@@ -66,6 +66,9 @@ final class Model: ObservableObject {
     var stale: Bool { limits.map { Date().timeIntervalSince($0.asOf) > Model.staleAfter } ?? false }
     var fiveHour: Double? { used(limits?.five_hour) }
     var sevenDay: Double? { used(limits?.seven_day) }
+    /// Model-specific weekly limits (Fable); empty when the plan has none, so no row is drawn.
+    var modelWeeks: [ModelWindow] { limits?.models ?? [] }
+    func stale(_ w: ModelWindow) -> Bool { stale || Date().timeIntervalSince(w.asOf) > Model.staleAfter }
 
     var barText: String {
         guard showInBar, !stale, let p = fiveHour else { return "" }
@@ -209,6 +212,9 @@ struct Panel: View {
             if m.limits != nil {
                 Meter(title: "Current 5-hour window", used: m.fiveHour, window: m.limits?.five_hour, stale: m.stale)
                 Meter(title: "Weekly (7 days)", used: m.sevenDay, window: m.limits?.seven_day, stale: m.stale)
+                ForEach(m.modelWeeks, id: \.name) { w in
+                    Meter(title: "Weekly, \(w.name) only", used: m.used(w.window), window: w.window, stale: m.stale(w))
+                }
                 Text(m.stale
                      ? (m.autoPausedForIdle ? "Out of date while you were away; it updates once you use the Mac again, or click Refresh."
                                             : "Out of date: use since then (desktop app, browser, phone) is not included. Click Refresh to check now.")
@@ -416,7 +422,8 @@ enum Main {
         if args.contains("--fetch-limits") {
             do {
                 let s = try Limits.fetchLive()
-                print("5h \(s.five_hour.map { "\($0.used_percentage)%" } ?? "-") · 7d \(s.seven_day.map { "\($0.used_percentage)%" } ?? "-")")
+                print("5h \(s.five_hour.map { "\($0.used_percentage)%" } ?? "-") · 7d \(s.seven_day.map { "\($0.used_percentage)%" } ?? "-")"
+                      + (s.models ?? []).map { " · 7d \($0.name) \($0.used_percentage)%" }.joined())
             } catch { print(error.localizedDescription); exit(1) }
             return
         }

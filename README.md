@@ -11,6 +11,7 @@ It uses only what Claude Code itself provides on your Mac: no claude.ai cookies,
 | Section | Source | Notes |
 |---|---|---|
 | **Plan limits**: 5-hour and weekly % used, reset times | 1. **Refresh**: one tiny message to Haiku through your own Claude Code (`claude -p … --output-format stream-json`), which prints a `rate_limit_event`. 2. Claude Code's documented status line field `rate_limits` ([docs](https://code.claude.com/docs/en/statusline)) after each reply in a terminal session | Pro, Max and Ultra plans. Numbers are dated by when they were reported and greyed out after 20 minutes. A Refresh costs about 1,000 Haiku tokens of your 5-hour allowance. |
+| **Weekly, Fable only** (or another model the plan limits separately): % used, reset time | Read with each check from Claude Code's own `/usage` command (`claude -p "/usage" --output-format json`): a local command, no message to a model, 0 tokens | The row is hidden on plans without a model-specific limit. `/usage` prints text, not a documented format, so this row can break after a Claude Code update; the other rows do not depend on it. |
 | **Weekly limit used per day** (7-day chart, whole account) | Each limit reading is saved to `~/Library/Application Support/Usage Meter/history.json`; a day's bar is how much the weekly % rose that day | 1% steps. Days of the current week before the first reading are estimated (≈): the week's % at that point, split by Claude Code activity on this Mac (API price ratios). Earlier weeks show –. Use while the Mac is off lands on the next day it checks. |
 | **Claude Code tokens**: last 5 h, today, 7 days, per model | Claude Code's session logs in `~/.claude/projects` | Includes cached input, so totals are large. Anthropic calls the log format internal, so this part can break after a Claude Code update. |
 
@@ -18,7 +19,7 @@ The gauge needle in the menu bar follows the 5-hour figure, with the % beside it
 
 ## Install
 
-Needs Xcode or the Command Line Tools (`xcode-select --install`). No other dependencies.
+Needs Xcode or the Command Line Tools (`xcode-select --install`). No other dependencies. `zsh build.sh test` runs the tests.
 
 ```bash
 zsh build.sh install
@@ -36,6 +37,7 @@ This builds a universal app, copies it to `/Applications` and opens it. Then, in
 
 - **Refresh** runs `claude -p "Reply with the single word ok." --model haiku --output-format stream-json --verbose --tools "" --strict-mcp-config --setting-sources "" --no-session-persistence` (no tools, no MCP servers, no settings, nothing saved) and reads `rate_limit_event.rate_limit_info.unifiedWindows` (`utilization` 0–1, `resetsAt`). This event is part of Claude Code's output but not documented, so it may change.
 
+- Each check then runs `claude -p "/usage" --output-format json --strict-mcp-config --setting-sources "" --no-session-persistence` and reads lines such as `Current week (Fable): 29% used · resets Nov 23 at 6:59am (Europe/Rome)` from its `result` text. The `rate_limit_event` has no model-specific window, which is why this second call exists. `/usage` shows the reset a minute early, so a reset within two minutes of the weekly one is shown as the weekly one.
 - `UsageMeter --statusline` is the status line command Claude Code runs. It reads Claude Code's JSON from stdin, saves the limits to `~/Library/Application Support/Usage Meter/limits.json` and prints a short line (`Opus · 5h 42% · 7d 71%`). The time of the session's last reply, from its transcript, dates the numbers, so an idle session cannot overwrite fresher ones.
 - The app reads that file and the session logs every 30 seconds (only changed log files are re-read).
 

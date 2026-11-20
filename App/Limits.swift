@@ -8,9 +8,21 @@ struct Window: Codable {
     var resetDate: Date { Date(timeIntervalSince1970: resets_at) }
 }
 
+/// A weekly limit that counts one model only (for example Fable), as `/usage` in Claude Code reports it.
+struct ModelWindow: Codable {
+    var name: String
+    var used_percentage: Double
+    var resets_at: Double              // Unix seconds
+    var as_of: Double                  // when this figure was read
+    var window: Window { Window(used_percentage: used_percentage, resets_at: resets_at) }
+    var asOf: Date { Date(timeIntervalSince1970: as_of) }
+}
+
 struct LimitSnapshot: Codable {
     var five_hour: Window?
     var seven_day: Window?
+    /// Model-specific weekly limits; missing or empty when the plan has none.
+    var models: [ModelWindow]?
     var updated_at: Double            // when the status line last ran
     var as_of: Double?                // when the session behind it last got a reply = how fresh the numbers are
     var updated: Date { Date(timeIntervalSince1970: updated_at) }
@@ -53,14 +65,16 @@ enum Limits {
     }
 
     /// Saves new numbers unless the stored ones are fresher. A window missing from the new report is kept
-    /// from the old snapshot until it resets. Returns what is stored afterwards.
+    /// from the old snapshot until it resets. `models` nil = this report says nothing about model limits
+    /// (keep the stored ones until they reset); an empty list = the plan has none. Returns what is stored afterwards.
     @discardableResult
-    static func store(five: Window?, seven: Window?, asOf: Date) -> LimitSnapshot {
+    static func store(five: Window?, seven: Window?, models: [ModelWindow]? = nil, asOf: Date) -> LimitSnapshot {
         let now = Date()
         let prev = load()
         func keep(_ w: Window?) -> Window? { w.flatMap { $0.resetDate > now ? $0 : nil } }
         guard prev == nil || asOf >= prev!.asOf.addingTimeInterval(-1) else { return prev! }
         let snap = LimitSnapshot(five_hour: five ?? keep(prev?.five_hour), seven_day: seven ?? keep(prev?.seven_day),
+                                 models: models ?? prev?.models?.filter { $0.window.resetDate > now },
                                  updated_at: now.timeIntervalSince1970, as_of: asOf.timeIntervalSince1970)
         if snap.five_hour != nil || snap.seven_day != nil {
             try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
@@ -120,7 +134,71 @@ enum Limits {
             }
             throw Problem("Claude Code answered but reported no plan limits (API-key login, or a changed format).")
         }
-        return store(five: five, seven: seven, asOf: Date())
+        return store(five: five, seven: seven, models: fetchModelWeeks(claude, cwd: dir, weekReset: seven?.resets_at),
+                     asOf: Date())
+    }
+
+    // MARK: model-specific weekly limits (Fable) from `/usage`
+
+    /// The `rate_limit_event` above carries no model-specific window, so these come from Claude Code's own
+    /// `/usage` command: a local command, no message to any model, 0 tokens. nil = the call failed
+    /// (keep what is stored); an empty list = it worked and the plan has no model-specific limit.
+    static func fetchModelWeeks(_ claude: String, cwd: URL, weekReset: Double?) -> [ModelWindow]? {
+        let r = runProcess(claude, ["-p", "/usage", "--output-format", "json", "--strict-mcp-config",
+                                    "--setting-sources", "", "--no-session-persistence"], cwd: cwd, timeout: 30)
+        guard let o = try? JSONSerialization.jsonObject(with: Data(r.out.utf8)) as? [String: Any],
+              o["is_error"] as? Bool != true, let text = o["result"] as? String,
+              // Only trust "no model rows" when the text is the usage report we know.
+              text.contains("Current week") else { return nil }
+        return parseModelWeeks(text, now: Date(), weekReset: weekReset)
+    }
+
+    /// Reads lines like `Current week (Fable): 29% used · resets Nov 23 at 6:59am (Europe/Rome)`.
+    /// "all models" is the ordinary weekly limit and is skipped. The text is not a documented format.
+    /// `/usage` prints the reset a minute early (6:59 for 7:00), so a reset within two minutes of the
+    /// weekly one is taken to be the weekly one. A line with no readable reset uses the weekly reset;
+    /// with neither, the line is dropped rather than given a made-up time.
+    static func parseModelWeeks(_ text: String, now: Date, weekReset: Double?) -> [ModelWindow] {
+        let line = try! NSRegularExpression(
+            pattern: #"^\s*Current week \(([^)]+)\):\s*(\d+(?:\.\d+)?)\s*% used(?:\s*·\s*resets\s+(.+?))?\s*$"#,
+            options: [.anchorsMatchLines])
+        let ns = text as NSString
+        var out: [ModelWindow] = []
+        for m in line.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let name = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            guard name.lowercased() != "all models", let pct = Double(ns.substring(with: m.range(at: 2))) else { continue }
+            var reset = m.range(at: 3).location == NSNotFound ? nil
+                : parseReset(ns.substring(with: m.range(at: 3)), now: now)?.timeIntervalSince1970
+            if let w = weekReset, reset == nil || abs(reset! - w) <= 120 { reset = w }
+            guard let r = reset else { continue }
+            out.append(ModelWindow(name: name, used_percentage: pct, resets_at: r, as_of: now.timeIntervalSince1970))
+        }
+        return out
+    }
+
+    /// `Nov 23 at 6:59am (Europe/Rome)`, `Jan 2 at 7am`, or just `10:49am`: the next such moment from `now`.
+    static func parseReset(_ s: String, now: Date) -> Date? {
+        let re = try! NSRegularExpression(
+            pattern: #"^(?:([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*([AaPp][Mm])?(?:\s*\(([^)]+)\))?\s*$"#)
+        let ns = s as NSString
+        guard let m = re.firstMatch(in: s, range: NSRange(location: 0, length: ns.length)) else { return nil }
+        func g(_ i: Int) -> String? { m.range(at: i).location == NSNotFound ? nil : ns.substring(with: m.range(at: i)) }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = g(6).flatMap { TimeZone(identifier: $0) } ?? .current
+        guard var hour = g(3).flatMap({ Int($0) }) else { return nil }
+        if let ap = g(5)?.lowercased() { hour = hour % 12 + (ap == "pm" ? 12 : 0) }
+        var c = DateComponents(hour: hour, minute: g(4).flatMap { Int($0) } ?? 0)
+        guard let month = g(1), let day = g(2).flatMap({ Int($0) }) else {
+            // Time only: the next time the clock shows it.
+            return cal.nextDate(after: now.addingTimeInterval(-60), matching: c, matchingPolicy: .nextTime)
+        }
+        let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        guard let mi = months.firstIndex(of: month.lowercased()) else { return nil }
+        c.month = mi + 1; c.day = day; c.year = cal.component(.year, from: now)
+        guard let d = cal.date(from: c) else { return nil }
+        // No year in the text: a date more than a day in the past means next year.
+        if d < now.addingTimeInterval(-86400) { c.year! += 1; return cal.date(from: c) }
+        return d
     }
 
     struct ProcResult { var out = "", err = "", code: Int32 = -1, timedOut = false }

@@ -1,9 +1,13 @@
 #!/bin/zsh
 # Builds "build/Usage Meter.app" (universal: Apple silicon + Intel, macOS 12+) with swiftc. No Xcode project.
-# Usage: zsh build.sh [install]
+# Usage: zsh build.sh [install | test]
 set -e
 here=${0:A:h}; app="$here/build/Usage Meter.app"; obj="$here/build/obj"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$obj"
+if [[ $1 == test ]]; then
+  swiftc -swift-version 5 "$here/App/Limits.swift" "$here/App/History.swift" "$here/App/UsageLog.swift" "$here/tests/main.swift" -o "$obj/tests"
+  exec "$obj/tests"
+fi
 src=("$here/App/UsageMeter.swift" "$here/App/UsageLog.swift" "$here/App/Limits.swift" "$here/App/Gauge.swift" "$here/App/History.swift")
 if [[ ! -f "$here/App/AppIcon.icns" ]]; then
   swiftc -swift-version 5 "$here/App/Gauge.swift" "$here/tools/icon/main.swift" -o "$obj/make-icon"
