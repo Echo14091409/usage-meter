@@ -44,11 +44,15 @@ How it compares with other Claude usage meters (open source and paid): [docs/COM
 
 Needs Xcode or the Command Line Tools (`xcode-select --install`). No other dependencies. `zsh build.sh test` runs the tests.
 
+Paste this into Terminal. It downloads this repository into a `usage-meter` folder, then builds and installs the app:
+
 ```bash
+git clone https://github.com/Echo14091409/usage-meter.git
+cd usage-meter
 zsh build.sh install
 ```
 
-This builds a universal app, copies it to `/Applications` and opens it. Then, in the panel, click **Connect to Claude Code**: it adds a `statusLine` entry to `~/.claude/settings.json` (a backup is kept as `settings.json.bak-usage-meter`). It will not replace a status line you already have.
+The last command builds a universal app, copies it to `/Applications` and opens it. To update later, run `git pull` in that folder and `zsh build.sh install` again. Then, in the panel, click **Connect to Claude Code**: it adds a `statusLine` entry to `~/.claude/settings.json` (a backup is kept as `settings.json.bak-usage-meter`). It will not replace a status line you already have.
 
 ## Windows (experimental)
 
