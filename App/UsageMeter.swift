@@ -535,14 +535,6 @@ struct Panel: View {
             }
     }
 
-    var hookHint: String {
-        switch m.hook {
-        case .ours: return "Connected. Run any prompt in Claude Code in a terminal and the 5-hour and weekly limits appear here."
-        case .other(let c): return "Claude Code already runs another status line (\(c)), so Usage Meter cannot receive limits."
-        default: return "Connect to Claude Code below. It then reports your 5-hour and weekly plan limits here after each reply (Pro, Max and Ultra plans)."
-        }
-    }
-
     static let timeFormat: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEE HH:mm"; return f }()
 
     func stat(_ t: String, _ n: Int) -> some View {

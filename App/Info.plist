@@ -4,12 +4,12 @@
 <dict>
   <key>CFBundleName</key><string>Usage Meter</string>
   <key>CFBundleDisplayName</key><string>Usage Meter</string>
-  <key>CFBundleIdentifier</key><string>io.github.saveliifetisov447.usage-meter</string>
+  <key>CFBundleIdentifier</key><string>io.github.echo14091409.usage-meter</string>
   <key>CFBundleExecutable</key><string>UsageMeter</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.11.0</string>
-  <key>CFBundleVersion</key><string>12</string>
+  <key>CFBundleShortVersionString</key><string>0.11.1</string>
+  <key>CFBundleVersion</key><string>13</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>

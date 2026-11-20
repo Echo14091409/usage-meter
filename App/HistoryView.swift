@@ -145,7 +145,7 @@ struct HistoryContent: View {
             }
             Text("Each line holds its last reading until the next one and drops to 0 at a reset. Recorded since "
                  + (m.historySince.map { Self.dateFormat.string(from: $0) } ?? "–")
-                 + "; the 5-hour and model lines since version 0.9.0. Whole account, in 1% steps; use while this Mac was off shows as one step at the next check.")
+                 + ". Whole account, in 1% steps; use while this Mac was off shows as one step at the next check.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
             Divider()

@@ -36,7 +36,6 @@ enum Paths {
         ?? FileManager.default.homeDirectoryForCurrentUser
     static let support = home.appendingPathComponent("Library/Application Support/Usage Meter")
     static let snapshot = support.appendingPathComponent("limits.json")
-    static let contributing = support.appendingPathComponent("contributing.txt")
     static let claudeSettings = home.appendingPathComponent(".claude/settings.json")
 }
 

@@ -28,10 +28,6 @@ struct UsageSummary {
     var byModel7d: [(model: String, totals: Totals)] = []
     /// Last 7 days per project folder, heaviest first; `share` is the part of the rough cost weight (adds up to 1).
     var byProject7d: [(project: String, totals: Totals, share: Double)] = []
-    var byDay: [(day: Date, total: Int)] = []        // last 7 calendar days, oldest first
-    var firstIn5h: Date?                              // oldest reply inside the 5-hour window
-    var lastReply: Date?
-    var files = 0
     var activity: [(time: Date, weight: Double)] = []   // every reply in the last 14 days, for estimates
 }
 
@@ -96,20 +92,14 @@ final class UsageLog {
         for (_, c) in cache { all.merge(c.replies) { a, _ in a } }
 
         var s = UsageSummary()
-        s.files = cache.count
         let cal = Calendar.current
         let start5h = now.addingTimeInterval(-5 * 3600)
         let start7d = now.addingTimeInterval(-7 * 86400)
         let startToday = cal.startOfDay(for: now)
         var models: [String: Totals] = [:]
         var projects: [String: (totals: Totals, weight: Double)] = [:]
-        var days: [Date: Int] = [:]
         for r in all.values {
-            if s.lastReply == nil || r.time > s.lastReply! { s.lastReply = r.time }
-            if r.time >= start5h {
-                s.last5h.add(r)
-                if s.firstIn5h == nil || r.time < s.firstIn5h! { s.firstIn5h = r.time }
-            }
+            if r.time >= start5h { s.last5h.add(r) }
             if r.time >= startToday { s.today.add(r) }
             if r.time >= start7d {
                 s.last7d.add(r); models[r.model, default: Totals()].add(r)
@@ -117,17 +107,11 @@ final class UsageLog {
                 projects[r.project]!.weight += r.weight
             }
             if r.time >= now.addingTimeInterval(-14 * 86400) { s.activity.append((r.time, r.weight)) }
-            let d = cal.startOfDay(for: r.time)
-            if d > cal.date(byAdding: .day, value: -7, to: startToday)! { days[d, default: 0] += r.total }
         }
         let allWeight = max(projects.values.reduce(0) { $0 + $1.weight }, 1)
         s.byProject7d = projects.sorted { $0.value.weight > $1.value.weight }
             .map { ($0.key, $0.value.totals, $0.value.weight / allWeight) }
         s.byModel7d = models.map { ($0.key, $0.value) }.sorted { $0.totals.output > $1.totals.output }
-        s.byDay = (0..<7).reversed().map { i in
-            let d = cal.date(byAdding: .day, value: -i, to: startToday)!
-            return (d, days[d] ?? 0)
-        }
         return s
     }
 }
