@@ -12,7 +12,7 @@ Read from each tool's own README, docs or store page on 20 November 2026. These 
 
 | Tool | Platform | Price / licence | Limits from | Per-model weekly | Several accounts | History | Pace | Alerts | Project stats | Leaves the machine (besides Anthropic) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| **Usage Meter** (this) | macOS menu bar | Free, MIT | CLI (`/usage`, 0 tokens) + status line | Yes | Yes: Add account, own Claude Code login | Chart 24 h / 7 d / 30 d, hour grid, 60 days kept | Yes | No | Yes | Nothing |
+| **Usage Meter** (this) | macOS menu bar | Free, MIT | CLI (`/usage`, 0 tokens) + status line | Yes | Yes: Add account, own Claude Code login | Chart 24 h / 7 d / 30 d, hour grid, 60 days kept | Yes | Yes: level, 100%, pace, reset | Yes | Nothing |
 | [Claude-Usage-Tracker](https://github.com/hamed-elfayome/Claude-Usage-Tracker) | macOS bar, widgets, status line | Free, MIT | token, cookie | Yes | Yes: profiles | Yes | Yes | Yes | n/s | Daily anonymous ping |
 | [ClaudeBar](https://github.com/tddworks/ClaudeBar) | macOS bar, notch, Touch Bar | Free, Apache-2.0 | CLI, token fallback | Yes | Yes: browser or config folder | 30-day cost chart | Yes | Yes, webhooks | Daily cost; project n/s | Opt-in leaderboard, webhooks |
 | [CodexBar](https://github.com/steipete/CodexBar) | macOS bar, Linux, CLI | Free, MIT | token, CLI, cookie | Sonnet stated | Yes | Yes | Even-use guide | Session only | Yes | n/s |
@@ -38,8 +38,7 @@ Read from each tool's own README, docs or store page on 20 November 2026. These 
 
 ## What it does not have (yet)
 
-- Notifications when a limit is close or has reset
 - Desktop widgets, iPhone or Watch views
 - Extra-usage, credit or API billing figures
-- Other providers (Codex and so on), Windows or Linux
+- Other providers (ChatGPT / Codex is planned), Windows or Linux
 - A way to work without Claude Code installed

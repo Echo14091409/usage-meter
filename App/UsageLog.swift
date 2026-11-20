@@ -41,7 +41,7 @@ final class UsageLog {
     let root: URL
     private var cache: [String: (mtime: Date, replies: [String: Reply])] = [:]
 
-    init(root: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")) {
+    init(root: URL = Paths.home.appendingPathComponent(".claude/projects")) {
         self.root = root
     }
 

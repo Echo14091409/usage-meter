@@ -6,6 +6,17 @@
 
 It uses only what Claude Code itself provides on your Mac: no claude.ai cookies, no private web endpoints, no API calls of its own.
 
+## Nothing leaves your Mac
+
+- **No data is collected.** There is no analytics, no telemetry, no crash reporting, no update check and no sync.
+- **The app makes no network connections at all.** It contains no networking code; you can check with `grep -rn "URLSession\|URLRequest" App/` (no matches).
+- **It never holds a login.** It does not read Claude Code's saved token or any browser cookie. It runs the `claude` command and reads what that prints.
+- **The only thing that talks to the internet is Claude Code itself**, which asks Anthropic for your own usage figures, exactly as when you type `/usage` in it.
+- Everything the app keeps (readings, history, settings) stays in `~/Library/Application Support/Usage Meter` on this Mac. Delete that folder and it is gone.
+- Notifications are local macOS notifications; nothing is sent to a server to deliver them.
+
+The screenshots here use made-up data.
+
 ## What it shows
 
 | Section | Source | Notes |
@@ -15,11 +26,14 @@ It uses only what Claude Code itself provides on your Mac: no claude.ai cookies,
 | **Weekly limit used per day** (7-day chart, whole account) | Each limit reading is saved to `~/Library/Application Support/Usage Meter/history.json`; a day's bar is how much the weekly % rose that day | 1% steps. Days of the current week before the first reading are estimated (≈): the week's % at that point, split by Claude Code activity on this Mac (API price ratios). Earlier weeks show –. Use while the Mac is off lands on the next day it checks. |
 | **Pace** (under each limit, and in History) | The window's average rate so far, carried to the reset: "on pace for 55%" or "full by Sat 14:20 at this pace" | No figure in the first tenth of a window or when the numbers are out of date. |
 | **History…** window: the limits over time (24 hours / 7 days / 30 days), an hour-of-day grid for the last 14 days with a few plain facts, Claude Code use per project folder, and the "What's contributing" part of Claude Code's `/usage` report | The saved readings (`history.json`, 60 days; 5-hour and model figures since 0.9.0), the session logs, and `contributing.txt` saved at each check | Everything stays on this Mac. Project shares are a rough cost weight from the logs, not the plan %. |
+| **Notifications** (off until you turn them on) | The same readings | When a limit passes a level you pick (50, 70, 80 or 90%) and at 100%; optionally when it is on pace to run out before the reset (from 30% used), and when a limit you were warned about has reset. For the 5-hour, weekly and model limits of every account, each once per limit window. |
 | **Claude Code tokens**: last 5 h, today, 7 days, per model | Claude Code's session logs in `~/.claude/projects` | Includes cached input, so totals are large. Anthropic calls the log format internal, so this part can break after a Claude Code update. |
 
 The gauge needle in the menu bar follows the 5-hour figure, with the % beside it while it is fresh.
 
 How it compares with other Claude usage meters (open source and paid): [docs/COMPARISON.md](docs/COMPARISON.md).
+
+<img src="docs/history.png" width="420" alt="History window: limits over time, pace, hour grid, projects">
 
 ## Install
 
@@ -57,6 +71,12 @@ This is for accounts that are yours, for example a personal and a work plan. Che
 - The app reads that file and the session logs every 30 seconds (only changed log files are re-read).
 
 Other options: `--fetch-limits` (the Refresh check from Terminal, all accounts), `--background` (start without opening the panel), `--screenshot out.png [dark]`, `--screenshot-history out.png [dark]`, `--set-hook on|off`, `--version`; `UM_HOME=<dir>` redirects the settings and snapshot paths for testing.
+
+## Planned
+
+- **ChatGPT plan limits**, next to the Claude ones, if the Codex CLI can report them the same way (the official tool asked on your own Mac, with no login held by this app). Not started; it will not be added through cookies or private endpoints.
+- Desktop widgets.
+- Extra-usage and credit figures, where Claude Code reports them.
 
 ## Limits of this approach
 

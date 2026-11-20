@@ -5,10 +5,10 @@ set -e
 here=${0:A:h}; app="$here/build/Usage Meter.app"; obj="$here/build/obj"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$obj"
 if [[ $1 == test ]]; then
-  swiftc -swift-version 5 "$here/App/Limits.swift" "$here/App/History.swift" "$here/App/UsageLog.swift" "$here/App/Accounts.swift" "$here/tests/main.swift" -o "$obj/tests"
+  swiftc -swift-version 5 "$here/App/Limits.swift" "$here/App/History.swift" "$here/App/UsageLog.swift" "$here/App/Accounts.swift" "$here/App/Alerts.swift" "$here/tests/main.swift" -o "$obj/tests"
   exec "$obj/tests"
 fi
-src=("$here/App/UsageMeter.swift" "$here/App/UsageLog.swift" "$here/App/Limits.swift" "$here/App/Gauge.swift" "$here/App/History.swift" "$here/App/HistoryView.swift" "$here/App/Accounts.swift")
+src=("$here/App/UsageMeter.swift" "$here/App/UsageLog.swift" "$here/App/Limits.swift" "$here/App/Gauge.swift" "$here/App/History.swift" "$here/App/HistoryView.swift" "$here/App/Accounts.swift" "$here/App/Alerts.swift" "$here/App/Notifier.swift")
 if [[ ! -f "$here/App/AppIcon.icns" ]]; then
   swiftc -swift-version 5 "$here/App/Gauge.swift" "$here/tools/icon/main.swift" -o "$obj/make-icon"
   "$obj/make-icon" "$obj/icon.png"; set_="$obj/AppIcon.iconset"; mkdir -p "$set_"

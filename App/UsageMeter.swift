@@ -31,6 +31,19 @@ final class Model: ObservableObject {
     @Published var showInBar = UserDefaults.standard.object(forKey: "showInBar") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showInBar, forKey: "showInBar") }
     }
+    /// Notifications: off until the user turns them on (macOS then asks for permission once).
+    @Published var notify = UserDefaults.standard.bool(forKey: "notify") {
+        didSet { UserDefaults.standard.set(notify, forKey: "notify") }
+    }
+    @Published var notifyLevel = UserDefaults.standard.object(forKey: "notifyLevel") as? Int ?? 80 {
+        didSet { UserDefaults.standard.set(notifyLevel, forKey: "notifyLevel") }
+    }
+    @Published var notifyPace = UserDefaults.standard.object(forKey: "notifyPace") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(notifyPace, forKey: "notifyPace") }
+    }
+    @Published var notifyReset = UserDefaults.standard.object(forKey: "notifyReset") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(notifyReset, forKey: "notifyReset") }
+    }
     /// The logins shown; the main one first.
     @Published var accounts: [Account] = Accounts.load()
     /// Which account the panel, the menu bar and the History window show.
@@ -80,6 +93,7 @@ final class Model: ObservableObject {
         daily = History.daily(h, activity: usage.activity)
         hook = Limits.hookState()
         if #available(macOS 13.0, *) { launchAtLogin = SMAppService.mainApp.status == .enabled }
+        sendAlerts()
         guard !scanning else { return }
         scanning = true
         let log = self.log, id = selected
@@ -153,6 +167,35 @@ final class Model: ObservableObject {
                 self.refresh()
             }
         }
+    }
+
+    /// Looks at every account's last reading and shows whatever notifications it calls for (each once per window).
+    func sendAlerts() {
+        guard notify else { return }
+        var state = Alerts.load()
+        let rules = Alerts.Rules(level: Double(notifyLevel), pace: notifyPace, reset: notifyReset)
+        var events: [Alerts.Event] = []
+        for a in accounts {
+            events += Alerts.evaluate(Limits.load(in: Accounts.dataDir(a.id)), account: a.id,
+                                      label: accounts.count > 1 ? a.name : nil, rules: rules, state: &state)
+        }
+        Alerts.save(state)
+        events.forEach(Notifier.shared.post)
+    }
+
+    /// Turning notifications on asks macOS for permission; if it says no, the switch goes back off.
+    func setNotify(_ on: Bool) {
+        guard on else { notify = false; return }
+        Notifier.shared.request { ok in
+            self.notify = ok
+            self.message = ok ? "" : "macOS is not allowing notifications from Usage Meter. Allow them in System Settings › Notifications › Usage Meter, then turn this on again."
+            if ok { self.sendAlerts() }
+        }
+    }
+
+    func testNotification() {
+        Notifier.shared.post(Alerts.Event(key: "test", title: "Usage Meter notifications work",
+                                          body: "You will hear from it when a limit passes \(notifyLevel)%."))
     }
 
     /// "Add account": makes the account's folders, then opens Terminal on Claude Code's own sign-in for it.
@@ -311,7 +354,7 @@ struct Panel: View {
                     .renderingMode(.template).foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Plan limits").font(.headline)
-                    Text(m.limits.map { "As of \(ago($0.asOf)) · from Claude Code" } ?? "No limit data yet")
+                    Text(m.limits.map { "As of \(ago($0.asOf))" + (m.accounts.count > 1 ? "" : " · from Claude Code") } ?? "No limit data yet")
                         .font(.caption).foregroundStyle(m.stale ? Color.orange : Color.secondary)
                 }
                 if m.accounts.count > 1 {
@@ -457,12 +500,30 @@ struct Panel: View {
                  ? "Only when you click Refresh."
                  : "Uses no tokens. Pauses after 10 minutes without keyboard or mouse use\(m.autoPausedForIdle ? " (paused now)" : "").")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Toggle("Notify me when a limit is close", isOn: Binding(get: { m.notify }, set: { m.setNotify($0) }))
+            if m.notify {
+                HStack {
+                    Text("Warn at")
+                    Picker("", selection: $m.notifyLevel) {
+                        Text("50%").tag(50); Text("70%").tag(70); Text("80%").tag(80); Text("90%").tag(90)
+                    }.labelsHidden().fixedSize()
+                    Text("and at 100%").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Test") { m.testNotification() }.controlSize(.small)
+                }
+                Toggle("Also when on pace to run out early", isOn: $m.notifyPace)
+                Toggle("Also when that limit has reset", isOn: $m.notifyReset)
+                Text("For the 5-hour, weekly and model limits of every account. Each notification comes once per limit window.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             Toggle("Show 5-hour % in the menu bar", isOn: $m.showInBar)
             if #available(macOS 13.0, *) {
                 Toggle("Open at login", isOn: Binding(get: { m.launchAtLogin }, set: { m.setLaunchAtLogin($0) }))
             }
 
             Divider()
+            Text("Nothing leaves this Mac: Usage Meter collects no data, has no analytics and makes no network connections. Only Claude Code itself talks to Anthropic.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Text("Usage Meter \(appVersion)").font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -526,6 +587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.action = #selector(toggle)
         item.button?.imagePosition = .imageLeading
         watcher = model.objectWillChange.sink { [weak self] in DispatchQueue.main.async { self?.sync() } }
+        Notifier.shared.start()
         model.onHistory = { [weak self] in self?.showHistory() }
         model.start()
         sync()

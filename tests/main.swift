@@ -199,6 +199,77 @@ check(!FileManager.default.fileExists(atPath: Accounts.dataDir(a2.id).path), "it
 Accounts.remove(Accounts.mainID)
 check(Accounts.load().first?.id == Accounts.mainID, "main account cannot be removed")
 
+
+// 12. Alerts: which notifications a reading calls for. Each fires once per limit window.
+let aNow = at(2026, 11, 19, 19, 0)                       // half-way through the week that resets Mon 23 Nov 07:00
+let aWeek = at(2026, 11, 23, 7, 0).timeIntervalSince1970
+func snap(five: Double? = nil, fiveReset: Date? = nil, week: Double? = nil, fable: Double? = nil, weekReset: Double = aWeek) -> LimitSnapshot {
+    LimitSnapshot(five_hour: five.map { Window(used_percentage: $0, resets_at: (fiveReset ?? at(2026, 11, 19, 22, 0)).timeIntervalSince1970) },
+                  seven_day: week.map { Window(used_percentage: $0, resets_at: weekReset) },
+                  models: fable.map { [ModelWindow(name: "Fable", used_percentage: $0, resets_at: weekReset, as_of: aNow.timeIntervalSince1970)] },
+                  updated_at: aNow.timeIntervalSince1970, as_of: aNow.timeIntervalSince1970)
+}
+var rules = Alerts.Rules(level: 80, pace: false, reset: true)
+var ast = Alerts.State()
+//    Below the level: nothing.
+var ev = Alerts.evaluate(snap(week: 40), account: "main", label: nil, rules: rules, state: &ast, now: aNow)
+check(ev.isEmpty, "nothing below the level, got \(ev.map(\.title))")
+//    Passing the level: one notification, with the reset time; not repeated on the next reading.
+ev = Alerts.evaluate(snap(week: 82), account: "main", label: nil, rules: rules, state: &ast, now: aNow)
+check(ev.count == 1 && ev[0].title == "Weekly limit at 82%", "level alert, got \(ev.map(\.title))")
+check(ev.first?.body.contains("Mon 07:00") == true, "body says when it resets, got \(ev.first?.body ?? "")")
+ev = Alerts.evaluate(snap(week: 85), account: "main", label: nil, rules: rules, state: &ast, now: aNow)
+check(ev.isEmpty, "not repeated in the same window")
+//    Reaching 100 %: its own notification, once.
+ev = Alerts.evaluate(snap(week: 100), account: "main", label: nil, rules: rules, state: &ast, now: aNow)
+check(ev.map(\.title) == ["Weekly limit reached"], "full alert, got \(ev.map(\.title))")
+check(Alerts.evaluate(snap(week: 100), account: "main", label: nil, rules: rules, state: &ast, now: aNow).isEmpty, "full not repeated")
+//    Straight to 100 % from below the level: only "reached", not both.
+var fresh = Alerts.State()
+ev = Alerts.evaluate(snap(five: 100), account: "main", label: nil, rules: rules, state: &fresh, now: aNow)
+check(ev.map(\.title) == ["5-hour limit reached"], "only 'reached' when jumping to 100, got \(ev.map(\.title))")
+//    The window resets (new reset time): "has reset" once, because a warning had been sent; then the level can fire again.
+ev = Alerts.evaluate(snap(week: 3, weekReset: aWeek + 7 * 86400), account: "main", label: nil, rules: rules, state: &ast, now: at(2026, 11, 23, 8, 0))
+check(ev.map(\.title) == ["Weekly limit has reset"], "reset alert, got \(ev.map(\.title))")
+check(Alerts.evaluate(snap(week: 3, weekReset: aWeek + 7 * 86400), account: "main", label: nil, rules: rules, state: &ast, now: at(2026, 11, 23, 8, 5)).isEmpty, "reset not repeated")
+var later = snap(week: 81, weekReset: aWeek + 7 * 86400); later.as_of = at(2026, 11, 27, 7, 59).timeIntervalSince1970
+ev = Alerts.evaluate(later, account: "main", label: nil, rules: rules, state: &ast, now: at(2026, 11, 27, 8, 0))
+check(ev.map(\.title) == ["Weekly limit at 81%"], "level fires again in the new window")
+//    A reset time that passes with no new reading also counts as a reset (the 5-hour window when you stop working).
+ev = Alerts.evaluate(snap(five: 100), account: "main", label: nil, rules: rules, state: &fresh, now: at(2026, 11, 19, 22, 1))
+check(ev.map(\.title) == ["5-hour limit has reset"], "reset by the clock, got \(ev.map(\.title))")
+//    No warning was sent in a window: its reset is not announced. Reset alerts can be turned off.
+var quiet = Alerts.State()
+_ = Alerts.evaluate(snap(week: 20), account: "main", label: nil, rules: rules, state: &quiet, now: aNow)
+check(Alerts.evaluate(snap(week: 1, weekReset: aWeek + 7 * 86400), account: "main", label: nil, rules: rules, state: &quiet, now: at(2026, 11, 23, 8, 0)).isEmpty, "quiet window resets quietly")
+var noReset = Alerts.State()
+_ = Alerts.evaluate(snap(week: 90), account: "main", label: nil, rules: Alerts.Rules(level: 80, pace: false, reset: false), state: &noReset, now: aNow)
+check(Alerts.evaluate(snap(week: 1, weekReset: aWeek + 7 * 86400), account: "main", label: nil, rules: Alerts.Rules(level: 80, pace: false, reset: false), state: &noReset, now: at(2026, 11, 23, 8, 0)).isEmpty, "reset alerts off")
+//    Pace: on pace to run out before the reset (60 % at half-time), once per window; needs 30 % used; off by default here.
+var pst = Alerts.State()
+rules = Alerts.Rules(level: 80, pace: true, reset: true)
+ev = Alerts.evaluate(snap(week: 60), account: "main", label: nil, rules: rules, state: &pst, now: aNow)
+check(ev.map(\.title) == ["Weekly limit on pace to run out"], "pace alert, got \(ev.map(\.title))")
+check(ev.first?.body.contains("Sun 03:00") == true, "pace body names the run-out time, got \(ev.first?.body ?? "")")
+check(Alerts.evaluate(snap(week: 62), account: "main", label: nil, rules: rules, state: &pst, now: aNow).isEmpty, "pace not repeated")
+var p2 = Alerts.State()
+check(Alerts.evaluate(snap(week: 40), account: "main", label: nil, rules: rules, state: &p2, now: aNow).isEmpty, "40 % at half-time is not on pace to run out")
+check(Alerts.evaluate(snap(five: 20, fiveReset: at(2026, 11, 19, 23, 20)), account: "main", label: nil, rules: rules, state: &p2, now: aNow).isEmpty, "under 30 % used: too early for a pace alert")
+//    Model limit and a second account: named in the title; accounts keep separate memory.
+var mst = Alerts.State()
+ev = Alerts.evaluate(snap(week: 50, fable: 90), account: "main", label: nil, rules: Alerts.Rules(level: 80, pace: false, reset: true), state: &mst, now: aNow)
+check(ev.map(\.title) == ["Weekly Fable limit at 90%"], "model alert, got \(ev.map(\.title))")
+ev = Alerts.evaluate(snap(week: 90), account: "abcd", label: "work@example.com", rules: Alerts.Rules(level: 80, pace: false, reset: true), state: &mst, now: aNow)
+check(ev.map(\.title) == ["work@example.com: Weekly limit at 90%"], "account named, got \(ev.map(\.title))")
+//    Out-of-date numbers raise nothing new. Level 0 = off.
+var old = Alerts.State()
+var stale = snap(week: 95); stale.as_of = aNow.timeIntervalSince1970 - 3600
+check(Alerts.evaluate(stale, account: "main", label: nil, rules: rules, state: &old, now: aNow).isEmpty, "stale reading raises nothing")
+check(Alerts.evaluate(snap(week: 95), account: "main", label: nil, rules: Alerts.Rules(level: 0, pace: false, reset: true), state: &old, now: aNow).map(\.title) == [], "level 0 = no level alerts below 100")
+//    The memory survives a restart.
+Alerts.save(ast)
+check(Alerts.load().limits.count == ast.limits.count && !ast.limits.isEmpty, "state saved and loaded")
+
 try? FileManager.default.removeItem(at: home)
 
 print(failed == 0 ? "all tests passed" : "\(failed) failed")
