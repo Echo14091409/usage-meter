@@ -12,7 +12,7 @@ Start it with "Usage Meter.cmd" next to this file. Needs Windows 10 or 11 and Cl
   -ClaudePath use this claude executable instead of looking for one
   -DataDir    where settings and history are kept (default: %APPDATA%\Usage Meter)
 
-Copyright (C) 2026 Echo14091409. GNU General Public License v3.0; see LICENSE in the repository.
+Copyright (C) 2026 Echo14091409. Creative Commons Attribution-NoDerivatives 4.0 (CC BY-ND 4.0): use and share unchanged copies, with credit; no modified versions. See LICENSE in the repository.
 This file must stay plain ASCII (Windows PowerShell 5.1 misreads other characters in scripts without a BOM).
 #>
 param(
