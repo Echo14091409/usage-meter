@@ -10,8 +10,8 @@ It uses only what Claude Code itself provides on your Mac: no claude.ai cookies,
 
 | Section | Source | Notes |
 |---|---|---|
-| **Plan limits**: 5-hour and weekly % used, reset times | 1. **Refresh**: one tiny message to Haiku through your own Claude Code (`claude -p … --output-format stream-json`), which prints a `rate_limit_event`. 2. Claude Code's documented status line field `rate_limits` ([docs](https://code.claude.com/docs/en/statusline)) after each reply in a terminal session | Pro, Max and Ultra plans. Numbers are dated by when they were reported and greyed out after 20 minutes. A Refresh costs about 1,000 Haiku tokens of your 5-hour allowance. |
-| **Weekly, Fable only** (or another model the plan limits separately): % used, reset time | Read with each check from Claude Code's own `/usage` command (`claude -p "/usage" --output-format json`): a local command, no message to a model, 0 tokens | The row is hidden on plans without a model-specific limit. `/usage` prints text, not a documented format, so this row can break after a Claude Code update; the other rows do not depend on it. |
+| **Plan limits**: 5-hour and weekly % used, reset times | 1. **Refresh** and the automatic checks: Claude Code's own `/usage` command, run headless (`claude -p "/usage" --output-format json`). It is a local command: no message to a model, 0 tokens. 2. Claude Code's documented status line field `rate_limits` ([docs](https://code.claude.com/docs/en/statusline)) after each reply in a terminal session, so the numbers also move while you work | Pro, Max and Ultra plans. Numbers are dated by when they were reported and greyed out after 20 minutes. |
+| **Weekly, Fable only** (or another model the plan limits separately): % used, reset time | The same `/usage` report | The row is hidden on plans without a model-specific limit. The status line does not carry this figure, so it only changes at a check. |
 | **Weekly limit used per day** (7-day chart, whole account) | Each limit reading is saved to `~/Library/Application Support/Usage Meter/history.json`; a day's bar is how much the weekly % rose that day | 1% steps. Days of the current week before the first reading are estimated (≈): the week's % at that point, split by Claude Code activity on this Mac (API price ratios). Earlier weeks show –. Use while the Mac is off lands on the next day it checks. |
 | **Claude Code tokens**: last 5 h, today, 7 days, per model | Claude Code's session logs in `~/.claude/projects` | Includes cached input, so totals are large. Anthropic calls the log format internal, so this part can break after a Claude Code update. |
 
@@ -35,9 +35,8 @@ This builds a universal app, copies it to `/Applications` and opens it. Then, in
 
 ## How it works
 
-- **Refresh** runs `claude -p "Reply with the single word ok." --model haiku --output-format stream-json --verbose --tools "" --strict-mcp-config --setting-sources "" --no-session-persistence` (no tools, no MCP servers, no settings, nothing saved) and reads `rate_limit_event.rate_limit_info.unifiedWindows` (`utilization` 0–1, `resetsAt`). This event is part of Claude Code's output but not documented, so it may change.
+- **Refresh** and each automatic check run `claude -p "/usage" --output-format json --strict-mcp-config --setting-sources "" --no-session-persistence` (no MCP servers, no settings, nothing saved; about 1.5 s) and read these lines from its `result` text: `Current session: 11% used · resets Nov 20 at 10:49am (Europe/Rome)`, `Current week (all models): 31% used · …`, `Current week (Fable): 29% used · …`. The text is not a documented format, so it may change. `/usage` prints resets to the minute and sometimes a minute early (6:59am one time, 7am the next), so when an exact reset time is already known (from the status line) and is within two minutes, that one is kept.
 
-- Each check then runs `claude -p "/usage" --output-format json --strict-mcp-config --setting-sources "" --no-session-persistence` and reads lines such as `Current week (Fable): 29% used · resets Nov 23 at 6:59am (Europe/Rome)` from its `result` text. The `rate_limit_event` has no model-specific window, which is why this second call exists. `/usage` shows the reset a minute early, so a reset within two minutes of the weekly one is shown as the weekly one.
 - `UsageMeter --statusline` is the status line command Claude Code runs. It reads Claude Code's JSON from stdin, saves the limits to `~/Library/Application Support/Usage Meter/limits.json` and prints a short line (`Opus · 5h 42% · 7d 71%`). The time of the session's last reply, from its transcript, dates the numbers, so an idle session cannot overwrite fresher ones.
 - The app reads that file and the session logs every 30 seconds (only changed log files are re-read).
 
@@ -46,7 +45,8 @@ Other options: `--fetch-limits` (the Refresh check from Terminal), `--background
 ## Limits of this approach
 
 - Without a Refresh, the plan figures are only as fresh as your last terminal Claude Code reply.
-- Each check uses about 1,070 Haiku tokens (2 in, 4 out, ~1,060 for Claude Code's minimal setup). Automatic checks (Off / 2 / 5 / 15 / 30 min, default 5) use about 12k tokens an hour at 5 min and pause after 10 minutes without keyboard or mouse use.
+- Checks use no tokens (up to 0.7.0 each one sent a tiny Haiku message, about 1,070 tokens). Automatic checks (Off / 2 / 5 / 15 / 30 min, default 5) pause after 10 minutes without keyboard or mouse use.
+- `/usage` reports whole percents as text. If Claude Code changes that text, checks fail with "reported no plan limits" until the parser is updated; the status line path keeps working.
 - Needs Claude Code installed and signed in with a Claude plan; with an API key there are no plan limits to show.
 
 ## Uninstall

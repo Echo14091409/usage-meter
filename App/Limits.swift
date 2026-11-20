@@ -100,78 +100,75 @@ enum Limits {
         return fm.isExecutableFile(atPath: p) ? p : nil
     }
 
-    /// Sends one tiny message to the smallest model through Claude Code (your own subscription, no tools,
-    /// no MCP, no settings, nothing saved) and reads the `rate_limit_event` Claude Code prints in
-    /// stream-json mode. Costs about 1,000 tokens of your 5-hour allowance.
+    /// Asks Claude Code for its own `/usage` report (your own subscription, no settings, no MCP, nothing
+    /// saved). `/usage` is a local command: no message goes to a model and it uses no tokens.
     static func fetchLive() throws -> LimitSnapshot {
         guard let claude = claudePath() else { throw Problem("Claude Code (the claude command) was not found.") }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("usage-meter-check")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let prompt = "Reply with the single word ok."
-        let r = runProcess(claude, ["-p", prompt, "--model", "haiku", "--output-format", "stream-json", "--verbose",
-                                    "--tools", "", "--strict-mcp-config", "--setting-sources", "",
-                                    "--no-session-persistence", "--system-prompt", prompt],
-                           cwd: dir, timeout: 90)
-        var five: Window?, seven: Window?
-        for line in r.out.split(separator: "\n") where line.contains("rate_limit_event") {
-            guard let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let info = o["rate_limit_info"] as? [String: Any],
-                  let wins = info["unifiedWindows"] as? [String: Any] else { continue }
-            func w(_ k: String) -> Window? {
-                guard let x = wins[k] as? [String: Any],
-                      let u = (x["utilization"] as? NSNumber)?.doubleValue,
-                      let t = (x["resetsAt"] as? NSNumber)?.doubleValue else { return nil }
-                return Window(used_percentage: u * 100, resets_at: t)
-            }
-            five = w("five_hour") ?? five
-            seven = w("seven_day") ?? seven
-        }
-        guard five != nil || seven != nil else {
-            if r.timedOut { throw Problem("Claude Code did not answer within 90 seconds.") }
-            if r.out.contains("\"is_error\":true") || r.code != 0 {
+        let r = runProcess(claude, ["-p", "/usage", "--output-format", "json", "--strict-mcp-config",
+                                    "--setting-sources", "", "--no-session-persistence"], cwd: dir, timeout: 60)
+        let o = (try? JSONSerialization.jsonObject(with: Data(r.out.utf8))) as? [String: Any]
+        let text = o?["result"] as? String ?? ""
+        // Exact reset times from the last report (the status line gives them to the second) to snap to.
+        let now = Date(), prev = load()
+        func known(_ w: Window?) -> Double? { w.flatMap { $0.resetDate > now ? $0.resets_at : nil } }
+        let u = parseUsage(text, now: now, fiveReset: known(prev?.five_hour), weekReset: known(prev?.seven_day))
+        guard o?["is_error"] as? Bool != true, u.five != nil || u.seven != nil else {
+            if r.timedOut { throw Problem("Claude Code did not answer within 60 seconds.") }
+            if o?["is_error"] as? Bool == true || r.code != 0 {
                 let hint = r.err.split(separator: "\n").last.map(String.init) ?? "exit code \(r.code)"
                 throw Problem("Claude Code failed: \(hint)")
             }
             throw Problem("Claude Code answered but reported no plan limits (API-key login, or a changed format).")
         }
-        return store(five: five, seven: seven, models: fetchModelWeeks(claude, cwd: dir, weekReset: seven?.resets_at),
-                     asOf: Date())
+        return store(five: u.five, seven: u.seven, models: u.models, asOf: now)
     }
 
-    // MARK: model-specific weekly limits (Fable) from `/usage`
+    // MARK: reading the `/usage` text
 
-    /// The `rate_limit_event` above carries no model-specific window, so these come from Claude Code's own
-    /// `/usage` command: a local command, no message to any model, 0 tokens. nil = the call failed
-    /// (keep what is stored); an empty list = it worked and the plan has no model-specific limit.
-    static func fetchModelWeeks(_ claude: String, cwd: URL, weekReset: Double?) -> [ModelWindow]? {
-        let r = runProcess(claude, ["-p", "/usage", "--output-format", "json", "--strict-mcp-config",
-                                    "--setting-sources", "", "--no-session-persistence"], cwd: cwd, timeout: 30)
-        guard let o = try? JSONSerialization.jsonObject(with: Data(r.out.utf8)) as? [String: Any],
-              o["is_error"] as? Bool != true, let text = o["result"] as? String,
-              // Only trust "no model rows" when the text is the usage report we know.
-              text.contains("Current week") else { return nil }
-        return parseModelWeeks(text, now: Date(), weekReset: weekReset)
-    }
+    struct UsageReport { var five: Window?; var seven: Window?; var models: [ModelWindow] = [] }
 
-    /// Reads lines like `Current week (Fable): 29% used · resets Nov 23 at 6:59am (Europe/Rome)`.
-    /// "all models" is the ordinary weekly limit and is skipped. The text is not a documented format.
-    /// `/usage` prints the reset a minute early (6:59 for 7:00), so a reset within two minutes of the
-    /// weekly one is taken to be the weekly one. A line with no readable reset uses the weekly reset;
-    /// with neither, the line is dropped rather than given a made-up time.
-    static func parseModelWeeks(_ text: String, now: Date, weekReset: Double?) -> [ModelWindow] {
+    /// Reads these lines (the text is not a documented format):
+    ///   `Current session: 11% used · resets Nov 20 at 10:49am (Europe/Rome)`   → 5-hour window
+    ///   `Current week (all models): 31% used · resets Nov 23 at 6:59am (…)`     → weekly limit
+    ///   `Current week (Fable): 29% used · resets Nov 23 at 6:59am (…)`          → a model-specific weekly limit
+    /// `/usage` prints a reset only to the minute and sometimes a minute early (6:59 for 7:00), so a known exact
+    /// reset (`fiveReset`, `weekReset`, from an earlier report) within two minutes of the printed one is used
+    /// instead. A line with no readable reset uses the known one; a model line uses the weekly one. With
+    /// nothing to go on the line is dropped rather than given a made-up time, except a session at 0 %,
+    /// which is a window that is not running.
+    static func parseUsage(_ text: String, now: Date, fiveReset: Double?, weekReset: Double?) -> UsageReport {
         let line = try! NSRegularExpression(
-            pattern: #"^\s*Current week \(([^)]+)\):\s*(\d+(?:\.\d+)?)\s*% used(?:\s*·\s*resets\s+(.+?))?\s*$"#,
+            pattern: #"^\s*Current (session|week)(?: \(([^)]+)\))?:\s*(\d+(?:\.\d+)?)\s*% used(?:\s*·\s*resets\s+(.+?))?\s*$"#,
             options: [.anchorsMatchLines])
         let ns = text as NSString
-        var out: [ModelWindow] = []
+        func resolve(_ printed: Double?, _ known: Double?) -> Double? {
+            guard let p = printed else { return known }
+            if let k = known, abs(p - k) <= 120 { return k }
+            return p
+        }
+        var out = UsageReport()
+        var modelLines: [(name: String, pct: Double, reset: Double?)] = []
         for m in line.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-            let name = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
-            guard name.lowercased() != "all models", let pct = Double(ns.substring(with: m.range(at: 2))) else { continue }
-            var reset = m.range(at: 3).location == NSNotFound ? nil
-                : parseReset(ns.substring(with: m.range(at: 3)), now: now)?.timeIntervalSince1970
-            if let w = weekReset, reset == nil || abs(reset! - w) <= 120 { reset = w }
-            guard let r = reset else { continue }
-            out.append(ModelWindow(name: name, used_percentage: pct, resets_at: r, as_of: now.timeIntervalSince1970))
+            func g(_ i: Int) -> String? { m.range(at: i).location == NSNotFound ? nil : ns.substring(with: m.range(at: i)) }
+            guard let pct = g(3).flatMap({ Double($0) }) else { continue }
+            let printed = g(4).flatMap { parseReset($0, now: now)?.timeIntervalSince1970 }
+            let name = g(2)?.trimmingCharacters(in: .whitespaces)
+            if g(1) == "session" {
+                if let r = resolve(printed, fiveReset) ?? (pct == 0 ? now.timeIntervalSince1970 : nil) {
+                    out.five = Window(used_percentage: pct, resets_at: r)
+                }
+            } else if name == nil || name!.lowercased() == "all models" {
+                if let r = resolve(printed, weekReset) { out.seven = Window(used_percentage: pct, resets_at: r) }
+            } else {
+                modelLines.append((name!, pct, printed))
+            }
+        }
+        let week = out.seven?.resets_at ?? weekReset
+        for l in modelLines {
+            guard let r = resolve(l.reset, week) else { continue }
+            out.models.append(ModelWindow(name: l.name, used_percentage: l.pct, resets_at: r, as_of: now.timeIntervalSince1970))
         }
         return out
     }

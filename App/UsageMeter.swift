@@ -90,7 +90,7 @@ final class Model: ObservableObject {
         if age >= Double(autoMinutes * 60) - 15 { checkLive() }
     }
 
-    /// Refresh button: re-read everything, then ask Claude Code for live limits (one tiny Haiku message).
+    /// Refresh button: re-read everything, then ask Claude Code for live limits (its `/usage` report, no tokens).
     func checkLive() {
         guard !checking else { return }
         checking = true
@@ -218,7 +218,7 @@ struct Panel: View {
                 Text(m.stale
                      ? (m.autoPausedForIdle ? "Out of date while you were away; it updates once you use the Mac again, or click Refresh."
                                             : "Out of date: use since then (desktop app, browser, phone) is not included. Click Refresh to check now.")
-                     : "Live as of the time above. Each check sends one tiny message to Haiku through Claude Code.")
+                     : "Live as of the time above. Each check reads Claude Code's own /usage report: no message to a model, no tokens. Replies in a terminal Claude Code session update it in between.")
                     .font(.caption).foregroundStyle(m.stale ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Weekly limit used per day").font(.subheadline.weight(.medium)).padding(.top, 2)
@@ -229,7 +229,7 @@ struct Panel: View {
                      + (m.daily.contains { $0.pct == nil } ? " – = before this week, no data." : ""))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Click Refresh to check your 5-hour and weekly limits now (sends one tiny message to Haiku through Claude Code).")
+                Text("Click Refresh to check your 5-hour and weekly limits now (reads Claude Code's own /usage report; uses no tokens).")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
 
@@ -289,7 +289,7 @@ struct Panel: View {
             }
             Text(m.autoMinutes == 0
                  ? "Only when you click Refresh."
-                 : "About \(1_070 * 60 / m.autoMinutes / 1000)k Haiku tokens an hour. Pauses after 10 minutes without keyboard or mouse use\(m.autoPausedForIdle ? " (paused now)" : "").")
+                 : "Uses no tokens. Pauses after 10 minutes without keyboard or mouse use\(m.autoPausedForIdle ? " (paused now)" : "").")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Toggle("Show 5-hour % in the menu bar", isOn: $m.showInBar)
             if #available(macOS 13.0, *) {
@@ -303,7 +303,7 @@ struct Panel: View {
                 if m.checking { ProgressView().controlSize(.small) }
                 Button(m.checking ? "Checking…" : "Refresh") { m.checkLive() }
                     .disabled(m.checking)
-                    .help("Re-reads the logs and asks Claude Code for your live limits (about 1,000 Haiku tokens).")
+                    .help("Re-reads the logs and asks Claude Code for your live limits (no tokens).")
                 Button("Quit") { NSApplication.shared.terminate(nil) }
             }
         }

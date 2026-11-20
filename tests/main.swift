@@ -26,35 +26,57 @@ What's contributing to your usage?
 let now = at(2026, 11, 20, 10, 33)
 let weekReset = at(2026, 11, 23, 7, 0).timeIntervalSince1970
 
-// 1. The real text: one model row, Fable 29 %, reset snapped to the weekly reset one minute later.
-var m = Limits.parseModelWeeks(real, now: now, weekReset: weekReset)
+// 1. The real text: session, week and one model row. Known exact resets (from an earlier status line
+//    report) one minute later replace the printed ones; `/usage` printed 10:49 for 10:50 and 6:59 for 7:00 here.
+let fiveReset = at(2026, 11, 20, 10, 50).timeIntervalSince1970
+var u = Limits.parseUsage(real, now: now, fiveReset: fiveReset, weekReset: weekReset)
+check(u.five?.used_percentage == 11, "session 11 %, got \(u.five?.used_percentage ?? -1)")
+check(u.five?.resets_at == fiveReset, "session reset snapped, got \(u.five?.resets_at ?? -1)")
+check(u.seven?.used_percentage == 31, "week 31 %, got \(u.seven?.used_percentage ?? -1)")
+check(u.seven?.resets_at == weekReset, "week reset snapped, got \(u.seven?.resets_at ?? -1)")
+var m = u.models
 check(m.count == 1, "one model-specific row, got \(m.count)")
 check(m.first?.name == "Fable", "name Fable, got \(m.first?.name ?? "nil")")
 check(m.first?.used_percentage == 29, "29 %, got \(m.first?.used_percentage ?? -1)")
-check(m.first?.resets_at == weekReset, "reset snapped to weekly reset, got \(m.first?.resets_at ?? -1)")
+check(m.first?.resets_at == weekReset, "model reset = week reset, got \(m.first?.resets_at ?? -1)")
 
-// 2. Without a weekly reset to snap to, the reset is read from the text, in the zone it names.
-m = Limits.parseModelWeeks(real, now: now, weekReset: nil)
-check(m.first?.resets_at == at(2026, 11, 23, 6, 59).timeIntervalSince1970, "reset parsed as Nov 23 06:59 Rome, got \(m.first?.resets_at ?? -1)")
+// 2. Nothing known to snap to: resets are read from the text, in the zone it names.
+u = Limits.parseUsage(real, now: now, fiveReset: nil, weekReset: nil)
+check(u.five?.resets_at == at(2026, 11, 20, 10, 49).timeIntervalSince1970, "session reset Nov 20 10:49 Rome, got \(u.five?.resets_at ?? -1)")
+check(u.seven?.resets_at == at(2026, 11, 23, 6, 59).timeIntervalSince1970, "week reset Nov 23 06:59 Rome, got \(u.seven?.resets_at ?? -1)")
+check(u.models.first?.resets_at == at(2026, 11, 23, 6, 59).timeIntervalSince1970, "model reset Nov 23 06:59 Rome")
+// A known reset that is far from the printed one (an old window) is not used.
+u = Limits.parseUsage(real, now: now, fiveReset: fiveReset - 5 * 3600, weekReset: weekReset - 7 * 86400)
+check(u.five?.resets_at == at(2026, 11, 20, 10, 49).timeIntervalSince1970, "old session reset ignored")
+check(u.seven?.resets_at == at(2026, 11, 23, 6, 59).timeIntervalSince1970, "old week reset ignored")
 
-// 3. A plan without a model-specific limit: no rows (the panel then hides the row).
+// 3. A plan without a model-specific limit: no model rows (the panel then hides the row). "Current week:" also counts.
 let plain = """
 Current session: 11% used · resets Nov 20 at 10:49am (Europe/Rome)
-Current week (all models): 31% used · resets Nov 23 at 6:59am (Europe/Rome)
+Current week: 31% used · resets Nov 23 at 6:59am (Europe/Rome)
 """
-check(Limits.parseModelWeeks(plain, now: now, weekReset: weekReset).isEmpty, "no model row on a plan without one")
-check(Limits.parseModelWeeks("", now: now, weekReset: weekReset).isEmpty, "empty text gives no rows")
+u = Limits.parseUsage(plain, now: now, fiveReset: nil, weekReset: nil)
+check(u.models.isEmpty, "no model row on a plan without one")
+check(u.five?.used_percentage == 11 && u.seven?.used_percentage == 31, "session and week still read")
+u = Limits.parseUsage("", now: now, fiveReset: nil, weekReset: nil)
+check(u.five == nil && u.seven == nil && u.models.isEmpty, "empty text gives nothing")
 
 // 4. A reset that lands in January when read in December belongs to next year.
 let dec = "Current week (Fable): 4% used · resets Jan 2 at 7am (Europe/Rome)"
-m = Limits.parseModelWeeks(dec, now: at(2026, 12, 29, 12, 0), weekReset: nil)
+m = Limits.parseUsage(dec, now: at(2026, 12, 29, 12, 0), fiveReset: nil, weekReset: nil).models
 check(m.first?.resets_at == at(2027, 1, 2, 7, 0).timeIntervalSince1970, "year rolls over, got \(m.first?.resets_at ?? -1)")
 check(m.first?.used_percentage == 4, "4 %")
 
-// 5. No reset in the line: fall back to the weekly reset; with neither, the row is dropped (no made-up time).
+// 5. No reset in a line. Model row: falls back to the weekly reset, dropped with neither (no made-up time).
 let bare = "Current week (Fable): 0% used"
-check(Limits.parseModelWeeks(bare, now: now, weekReset: weekReset).first?.resets_at == weekReset, "falls back to weekly reset")
-check(Limits.parseModelWeeks(bare, now: now, weekReset: nil).isEmpty, "dropped without any reset time")
+check(Limits.parseUsage(bare, now: now, fiveReset: nil, weekReset: weekReset).models.first?.resets_at == weekReset, "falls back to weekly reset")
+check(Limits.parseUsage(bare, now: now, fiveReset: nil, weekReset: nil).models.isEmpty, "dropped without any reset time")
+//    Session at 0 % with no reset (no window running): shown as 0 %, already reset.
+u = Limits.parseUsage("Current session: 0% used", now: now, fiveReset: nil, weekReset: nil)
+check(u.five?.used_percentage == 0 && u.five?.resets_at == now.timeIntervalSince1970, "idle session = 0 %, reset now")
+//    A used session with no reset and nothing known: not reported rather than guessed.
+check(Limits.parseUsage("Current session: 40% used", now: now, fiveReset: nil, weekReset: nil).five == nil, "no guess for a used session")
+check(Limits.parseUsage("Current session: 40% used", now: now, fiveReset: fiveReset, weekReset: nil).five?.resets_at == fiveReset, "known reset used when the line has none")
 
 // 6. Storing: a report without model rows (status line) keeps the stored ones; an empty report clears them.
 let home = FileManager.default.temporaryDirectory.appendingPathComponent("um-test-\(UUID().uuidString)")
