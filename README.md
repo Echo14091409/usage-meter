@@ -1,7 +1,5 @@
 # Usage Meter
 
-<img src="docs/panel.png" width="320" align="right" alt="Usage Meter panel: plan limits and Claude Code token history">
-
 **macOS** (12 Monterey or later, Apple silicon and Intel), plus an **experimental Windows version** ([below](#windows-experimental)). A menu-bar icon for your Claude plan limits and your Claude Code token use. (Usage meter for OpenAI etc. are under development and will appear soon)
 
 It uses only what Claude Code itself provides on your Mac: no claude.ai cookies, no private web endpoints, no API calls of its own.
@@ -33,7 +31,14 @@ The gauge needle in the menu bar follows the 5-hour figure, with the % beside it
 
 How it compares with other Claude usage meters (open source and paid): [docs/COMPARISON.md](docs/COMPARISON.md).
 
-<img src="docs/history.png" width="420" alt="History window: limits over time, pace, hour grid, projects">
+## Screenshots
+
+<table>
+<tr>
+<td valign="top"><img src="docs/panel.png" width="290" alt="Usage Meter panel: plan limits, pace, daily use and Claude Code tokens"></td>
+<td valign="top"><img src="docs/history-top.png" width="460" alt="History window: limits over time, pace and the hour-of-day grid"><br><a href="docs/history.png">The whole History window</a></td>
+</tr>
+</table>
 
 ## Install
 
