@@ -36,6 +36,7 @@ enum Paths {
         ?? FileManager.default.homeDirectoryForCurrentUser
     static let support = home.appendingPathComponent("Library/Application Support/Usage Meter")
     static let snapshot = support.appendingPathComponent("limits.json")
+    static let contributing = support.appendingPathComponent("contributing.txt")
     static let claudeSettings = home.appendingPathComponent(".claude/settings.json")
 }
 
@@ -80,7 +81,7 @@ enum Limits {
             try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
             if let d = try? JSONEncoder().encode(snap) { try? d.write(to: Paths.snapshot, options: .atomic) }
         }
-        if let w = seven, w.resetDate > now { History.record(w, at: asOf) }
+        if let w = seven, w.resetDate > now { History.record(five: five, seven: w, models: models, at: asOf) }
         return snap
     }
 
@@ -121,6 +122,11 @@ enum Limits {
                 throw Problem("Claude Code failed: \(hint)")
             }
             throw Problem("Claude Code answered but reported no plan limits (API-key login, or a changed format).")
+        }
+        // The rest of the report says what drives the use (skills, MCP servers, subagents); kept for the History window.
+        if let i = text.range(of: "What's contributing") {
+            try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
+            try? Data(text[i.lowerBound...].utf8).write(to: Paths.contributing, options: .atomic)
         }
         return store(five: u.five, seven: u.seven, models: u.models, asOf: now)
     }

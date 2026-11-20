@@ -16,6 +16,12 @@ final class Model: ObservableObject {
     /// % of the weekly limit used per day, last 7 days (whole account).
     @Published var daily: [History.Day] = []
     @Published var historySince: Date?
+    /// Every saved reading, for the History window.
+    @Published var history: [Reading] = []
+    /// The "What's contributing" part of the last `/usage` report.
+    @Published var contributing = ""
+    /// Opens the History window (set by the app delegate).
+    var onHistory: () -> Void = {}
     /// Minutes between automatic live checks; 0 = off.
     @Published var autoMinutes = UserDefaults.standard.object(forKey: "autoMinutes") as? Int ?? 5 {
         didSet { UserDefaults.standard.set(autoMinutes, forKey: "autoMinutes") }
@@ -40,6 +46,8 @@ final class Model: ObservableObject {
     func refresh() {
         limits = Limits.load()
         let h = History.load()
+        history = h
+        contributing = (try? String(contentsOf: Paths.contributing, encoding: .utf8)) ?? ""
         historySince = h.first.map { Date(timeIntervalSince1970: $0.t) }
         daily = History.daily(h, activity: usage.activity)
         hook = Limits.hookState()
@@ -144,6 +152,7 @@ struct Meter: View {
     let used: Double?
     let window: Window?
     var stale = false
+    var pace: Pace.Projection? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -160,7 +169,14 @@ struct Meter: View {
                 }
             }
             .frame(height: 8)
-            if let w = window { Text(until(w.resetDate)).font(.caption).foregroundStyle(.secondary) }
+            if let w = window {
+                HStack(spacing: 0) {
+                    Text(until(w.resetDate)).foregroundStyle(.secondary)
+                    if let t = paceText(pace) {
+                        Text(" · \(t)").foregroundStyle(pace?.runsOut != nil ? Color.orange : Color.secondary)
+                    }
+                }.font(.caption)
+            }
         }
     }
     var color: Color {
@@ -210,10 +226,13 @@ struct Panel: View {
                 }
             }
             if m.limits != nil {
-                Meter(title: "Current 5-hour window", used: m.fiveHour, window: m.limits?.five_hour, stale: m.stale)
-                Meter(title: "Weekly (7 days)", used: m.sevenDay, window: m.limits?.seven_day, stale: m.stale)
+                Meter(title: "Current 5-hour window", used: m.fiveHour, window: m.limits?.five_hour, stale: m.stale,
+                      pace: m.pace(m.limits?.five_hour, hours: 5))
+                Meter(title: "Weekly (7 days)", used: m.sevenDay, window: m.limits?.seven_day, stale: m.stale,
+                      pace: m.pace(m.limits?.seven_day, hours: 168))
                 ForEach(m.modelWeeks, id: \.name) { w in
-                    Meter(title: "Weekly, \(w.name) only", used: m.used(w.window), window: w.window, stale: m.stale(w))
+                    Meter(title: "Weekly, \(w.name) only", used: m.used(w.window), window: w.window, stale: m.stale(w),
+                          pace: m.stale(w) ? nil : m.pace(w.window, hours: 168))
                 }
                 Text(m.stale
                      ? (m.autoPausedForIdle ? "Out of date while you were away; it updates once you use the Mac again, or click Refresh."
@@ -221,7 +240,12 @@ struct Panel: View {
                      : "Live as of the time above. Each check reads Claude Code's own /usage report: no message to a model, no tokens. Replies in a terminal Claude Code session update it in between.")
                     .font(.caption).foregroundStyle(m.stale ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Weekly limit used per day").font(.subheadline.weight(.medium)).padding(.top, 2)
+                HStack {
+                    Text("Weekly limit used per day").font(.subheadline.weight(.medium))
+                    Spacer()
+                    Button("History…") { m.onHistory() }.controlSize(.small)
+                        .help("Charts of the limits over time, pace, hours of the day and Claude Code projects.")
+                }.padding(.top, 2)
                 DayBars(days: m.daily)
                 Text("Whole account: chat, apps, phone and Claude Code, in 1% steps."
                      + (m.daily.contains { $0.estimated } ? m.historySince.map {
@@ -337,6 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var item: NSStatusItem!
     var hosting: NSHostingController<Panel>!
     var watcher: AnyCancellable?
+    var historyWindow: NSWindow?
 
     /// True when macOS started the app as a login item; then it stays quietly in the menu bar.
     var launchedAtLogin = false
@@ -362,6 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.action = #selector(toggle)
         item.button?.imagePosition = .imageLeading
         watcher = model.objectWillChange.sink { [weak self] in DispatchQueue.main.async { self?.sync() } }
+        model.onHistory = { [weak self] in self?.showHistory() }
         model.start()
         sync()
         if !launchedAtLogin && !ProcessInfo.processInfo.arguments.contains("--background") {
@@ -374,6 +400,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.title = model.barText
         item.button?.toolTip = model.limits.map { "Usage Meter · limits as of \(ago($0.asOf))" } ?? "Usage Meter"
         if popover.isShown { popover.contentSize = hosting.view.fittingSize }
+    }
+
+    func showHistory() {
+        popover.performClose(nil)
+        if historyWindow == nil {
+            let host = NSHostingController(rootView: ScrollView { HistoryContent(m: model) })
+            let w = NSWindow(contentViewController: host)
+            w.title = "Usage Meter History"
+            w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            w.isReleasedWhenClosed = false
+            let h = min(760, (NSScreen.main?.visibleFrame.height ?? 800) - 60)
+            w.setContentSize(NSSize(width: 580, height: h))
+            w.contentMinSize = NSSize(width: 580, height: 300)
+            w.contentMaxSize = NSSize(width: 580, height: 4000)
+            w.center()
+            historyWindow = w
+        }
+        model.refresh()
+        NSApp.activate(ignoringOtherApps: true)
+        historyWindow?.makeKeyAndOrderFront(nil)
     }
 
     @objc func toggle() {
@@ -391,16 +437,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
-func screenshot(to path: String, dark: Bool) -> Bool {
+func screenshot(to path: String, dark: Bool, history: Bool = false) -> Bool {
     let m = Model()
     m.limits = Limits.load()
     let h = History.load()
+    m.history = h
+    m.contributing = (try? String(contentsOf: Paths.contributing, encoding: .utf8)) ?? ""
     m.daily = History.daily(h)
     m.historySince = h.first.map { Date(timeIntervalSince1970: $0.t) }
     m.hook = Limits.hookState()
     m.usage = m.log.summary()
     m.daily = History.daily(History.load(), activity: m.usage.activity)
-    let host = NSHostingView(rootView: Panel(m: m).background(Color(NSColor.windowBackgroundColor)))
+    let host = NSHostingView(rootView: (history ? AnyView(HistoryContent(m: m)) : AnyView(Panel(m: m)))
+        .background(Color(NSColor.windowBackgroundColor)))
     host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
     let size = host.fittingSize
     let w = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -432,6 +481,9 @@ enum Main {
             return
         }
         let app = NSApplication.shared
+        if let i = args.firstIndex(of: "--screenshot-history"), i + 1 < args.count {
+            exit(screenshot(to: args[i + 1], dark: args.contains("dark"), history: true) ? 0 : 1)
+        }
         if let i = args.firstIndex(of: "--screenshot"), i + 1 < args.count {
             exit(screenshot(to: args[i + 1], dark: args.contains("dark")) ? 0 : 1)
         }

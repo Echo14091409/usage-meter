@@ -4,6 +4,7 @@ import Foundation
 struct Reply {
     let time: Date
     let model: String
+    let project: String            // last folder name of the directory the reply was made in
     let input: Int, output: Int, cacheWrite: Int, cacheRead: Int
     var total: Int { input + output + cacheWrite + cacheRead }
     /// Rough relative cost (API list-price ratios), used only to split a known % across days.
@@ -25,6 +26,8 @@ struct Totals {
 struct UsageSummary {
     var last5h = Totals(), today = Totals(), last7d = Totals()
     var byModel7d: [(model: String, totals: Totals)] = []
+    /// Last 7 days per project folder, heaviest first; `share` is the part of the rough cost weight (adds up to 1).
+    var byProject7d: [(project: String, totals: Totals, share: Double)] = []
     var byDay: [(day: Date, total: Int)] = []        // last 7 calendar days, oldest first
     var firstIn5h: Date?                              // oldest reply inside the 5-hour window
     var lastReply: Date?
@@ -66,7 +69,8 @@ final class UsageLog {
             if model == "<synthetic>" { continue }
             let key = "\(msg["id"] as? String ?? "")|\(obj["requestId"] as? String ?? "")"
             func n(_ k: String) -> Int { (u[k] as? NSNumber)?.intValue ?? 0 }
-            out[key] = Reply(time: time, model: model, input: n("input_tokens"), output: n("output_tokens"),
+            let project = (obj["cwd"] as? String).map { URL(fileURLWithPath: $0).lastPathComponent } ?? "unknown"
+            out[key] = Reply(time: time, model: model, project: project, input: n("input_tokens"), output: n("output_tokens"),
                              cacheWrite: n("cache_creation_input_tokens"), cacheRead: n("cache_read_input_tokens"))
         }
         return out
@@ -98,6 +102,7 @@ final class UsageLog {
         let start7d = now.addingTimeInterval(-7 * 86400)
         let startToday = cal.startOfDay(for: now)
         var models: [String: Totals] = [:]
+        var projects: [String: (totals: Totals, weight: Double)] = [:]
         var days: [Date: Int] = [:]
         for r in all.values {
             if s.lastReply == nil || r.time > s.lastReply! { s.lastReply = r.time }
@@ -106,11 +111,18 @@ final class UsageLog {
                 if s.firstIn5h == nil || r.time < s.firstIn5h! { s.firstIn5h = r.time }
             }
             if r.time >= startToday { s.today.add(r) }
-            if r.time >= start7d { s.last7d.add(r); models[r.model, default: Totals()].add(r) }
+            if r.time >= start7d {
+                s.last7d.add(r); models[r.model, default: Totals()].add(r)
+                projects[r.project, default: (Totals(), 0)].totals.add(r)
+                projects[r.project]!.weight += r.weight
+            }
             if r.time >= now.addingTimeInterval(-14 * 86400) { s.activity.append((r.time, r.weight)) }
             let d = cal.startOfDay(for: r.time)
             if d > cal.date(byAdding: .day, value: -7, to: startToday)! { days[d, default: 0] += r.total }
         }
+        let allWeight = max(projects.values.reduce(0) { $0 + $1.weight }, 1)
+        s.byProject7d = projects.sorted { $0.value.weight > $1.value.weight }
+            .map { ($0.key, $0.value.totals, $0.value.weight / allWeight) }
         s.byModel7d = models.map { ($0.key, $0.value) }.sorted { $0.totals.output > $1.totals.output }
         s.byDay = (0..<7).reversed().map { i in
             let d = cal.date(byAdding: .day, value: -i, to: startToday)!

@@ -95,6 +95,68 @@ check((s.models ?? []).isEmpty, "cleared when /usage reports no model limit")
 // Old snapshot files (before 0.7.0) have no `models` key and must still load.
 try? Data(#"{"seven_day":{"used_percentage":31,"resets_at":\#(future)},"updated_at":1,"as_of":1}"#.utf8).write(to: Paths.snapshot)
 check(Limits.load()?.seven_day?.used_percentage == 31, "old snapshot without models still loads")
+
+// 7. Pace: where a window ends up if use carries on at the window's average rate so far.
+let wk = 7 * 86400.0
+let r7 = at(2026, 11, 23, 7, 0)                       // weekly reset; the window began Mon 16 Nov 07:00
+//    Half-way through at 30 %: on pace for 60 %, does not run out.
+var pr = Pace.project(used: 30, resetsAt: r7.timeIntervalSince1970, window: wk, now: at(2026, 11, 19, 19, 0))
+check(pr != nil && abs(pr!.atReset - 60) < 0.01 && pr!.runsOut == nil, "30 % at half-time = 60 % at reset, got \(String(describing: pr))")
+//    Half-way through at 80 %: on pace for 160 %; runs out when 100/80 of the elapsed time has passed.
+pr = Pace.project(used: 80, resetsAt: r7.timeIntervalSince1970, window: wk, now: at(2026, 11, 19, 19, 0))
+check(pr != nil && abs(pr!.atReset - 160) < 0.01, "80 % at half-time = 160 %")
+check(pr?.runsOut.map { abs($0.timeIntervalSince(at(2026, 11, 20, 16, 0))) < 1 } == true, "runs out Fri 20 Nov 16:00, got \(String(describing: pr?.runsOut))")
+//    Too early to say (under a tenth of the window gone), nothing used, already full, or already reset: no projection.
+check(Pace.project(used: 5, resetsAt: r7.timeIntervalSince1970, window: wk, now: at(2026, 11, 16, 12, 0)) == nil, "too early")
+check(Pace.project(used: 0, resetsAt: r7.timeIntervalSince1970, window: wk, now: at(2026, 11, 19, 19, 0)) == nil, "nothing used")
+check(Pace.project(used: 100, resetsAt: r7.timeIntervalSince1970, window: wk, now: at(2026, 11, 19, 19, 0))?.runsOut == nil, "already full: no run-out time")
+check(Pace.project(used: 50, resetsAt: r7.timeIntervalSince1970, window: wk, now: at(2026, 11, 23, 8, 0)) == nil, "window already reset")
+
+// 8. History keeps the 5-hour and model figures next to the weekly one; old entries without them still load.
+try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
+try? Data(#"[{"t":\#(Date().timeIntervalSince1970 - 3600),"s":10,"r":\#(future)}]"#.utf8).write(to: History.file)
+check(History.load().first?.s == 10 && History.load().first?.f == nil, "old history entry loads")
+let h0 = Date()
+func fab(_ p: Double) -> [ModelWindow] { [ModelWindow(name: "Fable", used_percentage: p, resets_at: future, as_of: 0)] }
+History.record(five: Window(used_percentage: 3, resets_at: future), seven: Window(used_percentage: 12, resets_at: future), models: fab(9), at: h0)
+var hist = History.load()
+check(hist.count == 2 && hist.last?.f == 3 && hist.last?.m?["Fable"] == 9, "5-hour and Fable recorded, got \(hist.count)")
+//    Nothing changed a minute later: not stored again. Only the 5-hour figure moved: stored.
+History.record(five: Window(used_percentage: 3, resets_at: future), seven: Window(used_percentage: 12, resets_at: future), models: fab(9), at: h0.addingTimeInterval(60))
+check(History.load().count == 2, "unchanged reading skipped")
+History.record(five: Window(used_percentage: 4, resets_at: future), seven: Window(used_percentage: 12, resets_at: future), models: fab(9), at: h0.addingTimeInterval(120))
+check(History.load().count == 3, "5-hour change stored")
+//    A status line report has no model figures: the entry simply has none (the chart skips it for that line).
+History.record(five: Window(used_percentage: 5, resets_at: future), seven: Window(used_percentage: 12, resets_at: future), models: nil, at: h0.addingTimeInterval(180))
+check(History.load().last?.m == nil && History.load().last?.f == 5, "entry without model figures")
+
+// 9. Hour grid: the weekly % rise between two readings lands in the later reading's hour.
+let wkR = at(2026, 11, 23, 7, 0).timeIntervalSince1970
+func rd(_ d: Int, _ h: Int, _ mi: Int, _ s: Double) -> Reading { Reading(t: at(2026, 11, d, h, mi).timeIntervalSince1970, s: s, r: wkR) }
+var cal = Calendar(identifier: .gregorian); cal.timeZone = rome
+let grid = History.hourly([rd(18, 9, 10, 10), rd(18, 9, 50, 12), rd(18, 14, 5, 15), rd(19, 23, 30, 16), rd(20, 0, 10, 18)],
+                          days: 3, now: at(2026, 11, 20, 10, 0), calendar: cal)
+check(grid.count == 3 && grid.allSatisfy { $0.hours.count == 24 }, "3 days × 24 hours")
+check(grid[0].hours[9] == 2 && grid[0].hours[14] == 3, "18 Nov: 2 % at 09h, 3 % at 14h, got \(grid[0].hours)")
+check(grid[0].hours[8] == nil, "before the first reading: unknown")
+check(grid[0].hours[10] == 0, "quiet hour after the first reading: 0")
+check(grid[1].hours[23] == 1 && grid[2].hours[0] == 2, "19 Nov 23h 1 %, 20 Nov 00h 2 %")
+check(grid[2].hours[11] == nil, "hours still to come: unknown")
+
+// 10. Claude Code logs: tokens per project folder (the `cwd` each reply was made in).
+let logs = home.appendingPathComponent("projects/-x-y")
+try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+let iso = ISO8601DateFormatter()
+func reply(_ id: String, _ cwd: String, _ out: Int) -> String {
+    #"{"type":"assistant","timestamp":"\#(iso.string(from: Date().addingTimeInterval(-3600)))","cwd":"\#(cwd)","requestId":"r\#(id)","message":{"id":"\#(id)","model":"claude-fable-5-2","usage":{"input_tokens":10,"output_tokens":\#(out),"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}"#
+}
+try? Data([reply("a", "/Users/me/repos/alpha", 100), reply("b", "/Users/me/repos/alpha", 100), reply("c", "/Users/me/repos/beta", 1000)]
+    .joined(separator: "\n").utf8).write(to: logs.appendingPathComponent("s.jsonl"))
+let byProject = UsageLog(root: home.appendingPathComponent("projects")).summary().byProject7d
+check(byProject.map(\.project) == ["beta", "alpha"], "projects by weight, got \(byProject.map(\.project))")
+check(byProject.first?.totals.output == 1000 && byProject.last?.totals.replies == 2, "project totals")
+check(abs(byProject.reduce(0) { $0 + $1.share } - 1) < 0.001, "shares add up to 1")
+
 try? FileManager.default.removeItem(at: home)
 
 print(failed == 0 ? "all tests passed" : "\(failed) failed")
