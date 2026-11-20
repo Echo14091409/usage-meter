@@ -273,6 +273,26 @@ check(Alerts.evaluate(snap(week: 95), account: "main", label: nil, rules: Alerts
 Alerts.save(ast)
 check(Alerts.load().limits.count == ast.limits.count && !ast.limits.isEmpty, "state saved and loaded")
 
+
+// 13. Update check: reading the version out of the repository's Info.plist and comparing versions.
+let plist = Data("""
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Usage Meter</string>
+  <key>CFBundleShortVersionString</key><string>0.12.3</string>
+</dict></plist>
+""".utf8)
+check(Updates.version(inPlist: plist) == "0.12.3", "version read from a plist, got \(Updates.version(inPlist: plist) ?? "nil")")
+check(Updates.version(inPlist: Data("404: Not Found".utf8)) == nil, "not a plist: no version")
+check(Updates.isNewer("0.12.0", than: "0.11.1"), "0.12.0 is newer than 0.11.1")
+check(Updates.isNewer("0.10.0", than: "0.9.9"), "0.10.0 is newer than 0.9.9 (numbers, not text)")
+check(Updates.isNewer("1.0", than: "0.99.9"), "1.0 is newer than 0.99.9")
+check(!Updates.isNewer("0.11.1", than: "0.11.1"), "same version is not newer")
+check(!Updates.isNewer("0.11", than: "0.11.0"), "0.11 equals 0.11.0")
+check(!Updates.isNewer("0.9.0", than: "0.11.1"), "older is not newer")
+check(!Updates.isNewer("garbage", than: "0.11.1"), "an unreadable version is not newer")
+check(Updates.source.host == "raw.githubusercontent.com" && Updates.source.scheme == "https", "the check goes to GitHub over https only")
+
 try? FileManager.default.removeItem(at: home)
 
 print(failed == 0 ? "all tests passed" : "\(failed) failed")

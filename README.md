@@ -6,8 +6,8 @@ It uses only what Claude Code itself provides on your Mac: no claude.ai cookies,
 
 ## Nothing leaves your Mac
 
-- **No data is collected.** There is no analytics, no telemetry, no crash reporting, no update check and no sync.
-- **The app makes no network connections at all.** It contains no networking code; you can check with `grep -rn "URLSession\|URLRequest" App/` (no matches).
+- **No data is collected.** There is no analytics, no telemetry, no crash reporting, no automatic update check and no sync.
+- **The app never goes online by itself.** The one exception is the **Check for updates** button: only when you press it, the app downloads one public file from this repository on GitHub to read the latest version number. Nothing about you or your usage is sent. You can check with `grep -rn "URLSession\|URLRequest" App/`: the only matches are in `App/Updates.swift`.
 - **It never holds a login.** It does not read Claude Code's saved token or any browser cookie. It runs the `claude` command and reads what that prints.
 - **The only thing that talks to the internet is Claude Code itself**
 - Everything the app keeps (readings, history, settings) stays in `~/Library/Application Support/Usage Meter` on this Mac. 
@@ -52,7 +52,7 @@ cd usage-meter
 zsh build.sh install
 ```
 
-The last command builds a universal app, copies it to `/Applications` and opens it. To update later, run `git pull` in that folder and `zsh build.sh install` again. Then, in the panel, click **Connect to Claude Code**: it adds a `statusLine` entry to `~/.claude/settings.json` (a backup is kept as `settings.json.bak-usage-meter`). It will not replace a status line you already have.
+The last command builds a universal app, copies it to `/Applications` and opens it. To update later, run `git pull` in that folder and `zsh build.sh install` again. **Check for updates** at the bottom of the panel tells you whether there is a newer version; it never checks by itself. Then, in the panel, click **Connect to Claude Code**: it adds a `statusLine` entry to `~/.claude/settings.json` (a backup is kept as `settings.json.bak-usage-meter`). It will not replace a status line you already have.
 
 ## Windows (experimental)
 
@@ -94,7 +94,7 @@ This is for accounts that are yours, for example a personal and a work plan. Che
 - `UsageMeter --statusline` is the status line command Claude Code runs. It reads Claude Code's JSON from stdin, saves the limits to `~/Library/Application Support/Usage Meter/limits.json` and prints a short line (`Opus · 5h 42% · 7d 71%`). The time of the session's last reply, from its transcript, dates the numbers, so an idle session cannot overwrite fresher ones.
 - The app reads that file and the session logs every 30 seconds (only changed log files are re-read).
 
-Other options: `--fetch-limits` (the Refresh check from Terminal, all accounts), `--background` (start without opening the panel), `--screenshot out.png [dark]`, `--screenshot-history out.png [dark]`, `--set-hook on|off`, `--version`; `UM_HOME=<dir>` redirects the settings and snapshot paths for testing.
+Other options: `--check-update` (the same check as the button, from Terminal), `--fetch-limits` (the Refresh check from Terminal, all accounts), `--background` (start without opening the panel), `--screenshot out.png [dark]`, `--screenshot-history out.png [dark]`, `--set-hook on|off`, `--version`; `UM_HOME=<dir>` redirects the settings and snapshot paths for testing.
 
 ## Planned or suggested
 

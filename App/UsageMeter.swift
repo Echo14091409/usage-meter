@@ -31,6 +31,10 @@ final class Model: ObservableObject {
     @Published var showInBar = UserDefaults.standard.object(forKey: "showInBar") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showInBar, forKey: "showInBar") }
     }
+    /// Result of the last manual update check ("" = not checked).
+    @Published var updateNote = ""
+    @Published var updateAvailable = false
+    @Published var checkingUpdate = false
     /// Notifications: off until the user turns them on (macOS then asks for permission once).
     @Published var notify = UserDefaults.standard.bool(forKey: "notify") {
         didSet { UserDefaults.standard.set(notify, forKey: "notify") }
@@ -190,6 +194,28 @@ final class Model: ObservableObject {
             self.notify = ok
             self.message = ok ? "" : "macOS is not allowing notifications from Usage Meter. Allow them in System Settings › Notifications › Usage Meter, then turn this on again."
             if ok { self.sendAlerts() }
+        }
+    }
+
+    /// "Check for updates": the only time the app itself goes online, and only on this click.
+    func checkForUpdate() {
+        guard !checkingUpdate else { return }
+        checkingUpdate = true
+        updateNote = ""
+        Task.detached {
+            let result = Result { try Updates.latestVersion() }
+            await MainActor.run {
+                self.checkingUpdate = false
+                switch result {
+                case .success(let v):
+                    self.updateAvailable = Updates.isNewer(v, than: appVersion)
+                    self.updateNote = self.updateAvailable ? "Version \(v) is available (you have \(appVersion))."
+                                                           : "You have the latest version (\(appVersion))."
+                case .failure(let e):
+                    self.updateAvailable = false
+                    self.updateNote = e.localizedDescription
+                }
+            }
         }
     }
 
@@ -522,8 +548,21 @@ struct Panel: View {
             }
 
             Divider()
-            Text("Nothing leaves this Mac: Usage Meter collects no data, has no analytics and makes no network connections. Only Claude Code itself talks to Anthropic.")
+            Text("Nothing leaves this Mac: Usage Meter collects no data, has no analytics and goes online only when you press Check for updates (it then asks GitHub for the latest version number). Only Claude Code itself talks to Anthropic.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(m.checkingUpdate ? "Checking…" : "Check for updates") { m.checkForUpdate() }
+                    .disabled(m.checkingUpdate).controlSize(.small)
+                    .help("Asks GitHub for this app's latest version number. Never happens by itself.")
+                if m.updateAvailable {
+                    Button("How to update") { NSWorkspace.shared.open(Updates.page) }.controlSize(.small)
+                }
+                Spacer()
+            }
+            if !m.updateNote.isEmpty {
+                Text(m.updateNote).font(.caption).foregroundStyle(m.updateAvailable ? Color.orange : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Text("Usage Meter \(appVersion)").font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -663,6 +702,14 @@ enum Main {
         let args = CommandLine.arguments
         if args.contains("--statusline") { Limits.statusLineMain(); return }
         if args.contains("--version") { print(appVersion); return }
+        if args.contains("--check-update") {
+            do {
+                let v = try Updates.latestVersion()
+                print(Updates.isNewer(v, than: appVersion) ? "Version \(v) is available (you have \(appVersion))."
+                                                           : "You have the latest version (\(appVersion)); GitHub has \(v).")
+            } catch { print(error.localizedDescription); exit(1) }
+            return
+        }
         if args.contains("--fetch-limits") {
             var failed = false
             let all = Accounts.load()
