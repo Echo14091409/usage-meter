@@ -91,4 +91,4 @@ Click **Disconnect** in the panel, quit the app, and delete `/Applications/Usage
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+Copyright © 2026 Echo14091409. Free software under the **GNU General Public License v3.0** — see [LICENSE](LICENSE). You may use, change and share it; if you distribute a changed version, you must publish its source under the same licence.
