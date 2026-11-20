@@ -2,7 +2,7 @@
 
 <img src="docs/panel.png" width="320" align="right" alt="Usage Meter panel: plan limits and Claude Code token history">
 
-**macOS** (12 Monterey or later, Apple silicon and Intel), plus an **experimental Windows version** ([below](#windows-experimental)). A menu-bar icon for your Claude plan limits and your Claude Code token use. (Usgae meter for OpenAI etc. are under developent and will appear soon)
+**macOS** (12 Monterey or later, Apple silicon and Intel), plus an **experimental Windows version** ([below](#windows-experimental)). A menu-bar icon for your Claude plan limits and your Claude Code token use. (Usage meter for OpenAI etc. are under development and will appear soon)
 
 It uses only what Claude Code itself provides on your Mac: no claude.ai cookies, no private web endpoints, no API calls of its own.
 
