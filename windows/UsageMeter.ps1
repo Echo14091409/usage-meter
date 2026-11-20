@@ -23,7 +23,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:Version = '0.12.0 experimental'
+$script:Version = '0.1.0 experimental'
 $script:Dot = [string][char]0x00B7           # the middle dot Claude Code prints between fields
 $script:Inv = [Globalization.CultureInfo]::InvariantCulture
 if (-not $DataDir) { $DataDir = Join-Path $env:APPDATA 'Usage Meter' }

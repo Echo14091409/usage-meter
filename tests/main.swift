@@ -1,6 +1,9 @@
 import Foundation
 
 // Run with: zsh build.sh test
+// Times are written out in the local zone, so the tests fix one (CI machines run in UTC).
+setenv("TZ", "Europe/Rome", 1)
+NSTimeZone.resetSystemTimeZone()
 var failed = 0
 func check(_ ok: Bool, _ what: String, line: Int = #line) {
     if !ok { failed += 1; print("FAIL (line \(line)): \(what)") }

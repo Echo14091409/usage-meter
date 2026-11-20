@@ -2,7 +2,7 @@
 
 <img src="docs/panel.png" width="320" align="right" alt="Usage Meter panel: plan limits and Claude Code token history">
 
-**macOS only** (12 Monterey or later, Apple silicon and Intel). A menu-bar icon for your Claude plan limits and your Claude Code token use. (Usgae meter for OpenAI etc. are under developent and will appear soon)
+**macOS** (12 Monterey or later, Apple silicon and Intel), plus an **experimental Windows version** ([below](#windows-experimental)). A menu-bar icon for your Claude plan limits and your Claude Code token use. (Usage meters for OpenAI etc. are under development and will appear soon.)
 
 It uses only what Claude Code itself provides on your Mac: no claude.ai cookies, no private web endpoints, no API calls of its own.
 
@@ -44,6 +44,21 @@ zsh build.sh install
 ```
 
 This builds a universal app, copies it to `/Applications` and opens it. Then, in the panel, click **Connect to Claude Code**: it adds a `statusLine` entry to `~/.claude/settings.json` (a backup is kept as `settings.json.bak-usage-meter`). It will not replace a status line you already have.
+
+## Windows (experimental)
+
+A tray version for Windows 10 and 11 lives in [`windows/`](windows). It asks Claude Code the same way (`claude -p "/usage"`, no tokens) and, like the Mac app, makes no network connections and collects nothing.
+
+**Start it:** download this repository (Code › Download ZIP), unzip it, and double-click `windows\Usage Meter.cmd`. There is nothing to install or build: it is one PowerShell script, [`UsageMeter.ps1`](windows/UsageMeter.ps1), which you can read before running. Claude Code must be installed and signed in with a Claude plan.
+
+- **Tray icon** with the 5-hour % in it; hover for the 5-hour, weekly and model figures.
+- **Click** it for a panel with each limit, its reset time and its pace. **Right-click** for Refresh, how often to check (Off / 2 / 5 / 15 / 30 min; pauses after 10 minutes without input), notifications and their level, Start with Windows, and Quit.
+- Readings are saved to `%APPDATA%\Usage Meter\history.json` in the same format as on the Mac.
+- **Not in it yet:** the History window and charts, several accounts, live updates from the status line, token counts.
+- The launcher uses `-ExecutionPolicy Bypass` for that one run only; no system setting is changed. "Start with Windows" adds a shortcut to your Startup folder and removes it when you untick it.
+- `powershell -ExecutionPolicy Bypass -File windows\UsageMeter.ps1 -Once` prints one line (`5h 12% | week 33% | Fable 30%`) and exits; `-SelfTest` runs its tests.
+
+Why "experimental": its tests run on a real Windows machine on every change (reading the report, pace, notification rules, the history file, building the tray icon and panel, and one full check against a stand-in for Claude Code), but it has not yet been used day to day on a Windows desktop. Reports are welcome.
 
 ## Several accounts
 
